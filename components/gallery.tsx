@@ -128,12 +128,6 @@ export default function Gallery({ username }: GalleryProps) {
           if (nearbyCanvas && !drawingMode && controls.isLocked) {
             console.log("Entering drawing mode for canvas:", nearbyCanvas.userData?.id)
             enterDrawingMode(nearbyCanvas)
-          } else if (!drawingMode && controls.isLocked) {
-            console.log("Pressed E but no canvas nearby or not eligible:", {
-              nearbyCanvas: !!nearbyCanvas,
-              drawingMode,
-              isLocked: controls.isLocked,
-            })
           }
           break
         // Add debug key to log all players
@@ -386,7 +380,7 @@ export default function Gallery({ username }: GalleryProps) {
         model.rotation.y = camera.rotation.y
         nameSprite.position.set(
           playerPosition.x,
-          playerPosition.y + 2.9, // Increased height for name tag
+          playerPosition.y + 1.8, // Reduced from 2.9 to 1.8
           playerPosition.z,
         )
       }
@@ -724,21 +718,31 @@ export default function Gallery({ username }: GalleryProps) {
     }
 
     function checkCanvasInteraction() {
+      if (drawingMode) return
+
+      // Create a raycaster from camera center
       raycaster.setFromCamera(new THREE.Vector2(0, 0), camera)
 
-      const intersects = raycaster.intersectObjects(canvases)
+      // Check for intersections with canvases
+      const intersects = raycaster.intersectObjects(canvases, false)
 
       if (intersects.length > 0 && intersects[0].distance < 3) {
         const canvasObject = intersects[0].object as THREE.Mesh
         setNearbyCanvas(canvasObject)
         setInteractionPrompt("Press E to draw on canvas")
+        document.body.style.cursor = "pointer"
       } else {
-        setNearbyCanvas(null)
-        setInteractionPrompt("")
+        if (nearbyCanvas) {
+          setNearbyCanvas(null)
+          setInteractionPrompt("")
+          document.body.style.cursor = "auto"
+        }
       }
     }
 
     function enterDrawingMode(canvasObj: THREE.Mesh) {
+      console.log("Entering drawing mode for canvas:", canvasObj.userData?.id)
+      console.log("Canvas object:", canvasObj)
       controls.unlock()
       setDrawingMode(true)
       setCurrentCanvas(canvasObj)
@@ -859,7 +863,7 @@ export default function Gallery({ username }: GalleryProps) {
         playerName,
         new THREE.Vector3(
           position.x,
-          position.y + 2.2, // Position above player
+          position.y + 1.8, // Reduced from 2.2 to 1.8 (about 20% lower)
           position.z,
         ),
       )
@@ -972,7 +976,7 @@ export default function Gallery({ username }: GalleryProps) {
           conn.send({
             type: "playerInfo",
             data: {
-              id: peerRef.current?.id,
+              id: myId, // Use myId directly instead of peerRef.current?.id
               username,
               position: {
                 x: playerPosition.x,
@@ -981,7 +985,7 @@ export default function Gallery({ username }: GalleryProps) {
               },
               rotation: playerRotationRef.current,
               color: playerModelsRef.current[myId]?.model
-                ? (playerModelsRef.current[myId].model as any).material?.color?.getHexString()
+                ? (playerModelsRef.current[myId].model as any).children[0].material.color.getHexString()
                 : getRandomColor(),
             },
           })
@@ -1129,6 +1133,12 @@ export default function Gallery({ username }: GalleryProps) {
         return
       }
 
+      // Skip if this is our own player ID to prevent duplicates
+      if (playerData.id === myId) {
+        console.log("Received own player info, ignoring to prevent duplicates")
+        return
+      }
+
       console.log("Received player info:", playerData)
 
       // Add to known peers
@@ -1173,7 +1183,11 @@ export default function Gallery({ username }: GalleryProps) {
 
         model.rotation.y = moveData.rotation
 
-        nameSprite.position.set(moveData.position.x, moveData.position.y + 2.2, moveData.position.z)
+        nameSprite.position.set(
+          moveData.position.x,
+          moveData.position.y + 1.8, // Reduced from 2.2 to 1.8 (about 20% lower)
+          moveData.position.z,
+        )
       }
     }
 
@@ -1283,7 +1297,13 @@ export default function Gallery({ username }: GalleryProps) {
 
     // Expose functions to React component
     window.exitDrawingMode = (drawingCanvas: HTMLCanvasElement) => {
-      if (!currentCanvas) return
+      console.log("Exiting drawing mode")
+      if (!currentCanvas) {
+        console.error("No current canvas to save drawing to")
+        return
+      }
+
+      console.log("Saving drawing to canvas:", currentCanvas.userData?.id)
 
       // Get the canvas data
       const canvasId = currentCanvas.userData.id
