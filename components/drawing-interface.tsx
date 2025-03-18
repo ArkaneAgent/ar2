@@ -45,12 +45,6 @@ export function DrawingInterface() {
       ctx.stroke()
     }
 
-    // Add some text
-    ctx.fillStyle = "#888888"
-    ctx.font = "20px Arial"
-    ctx.textAlign = "center"
-    ctx.fillText("Draw here", canvas.width / 2, canvas.height / 2)
-
     // Setup event listeners
     const handleMouseDown = (e: MouseEvent) => {
       setDrawing(true)
@@ -62,7 +56,7 @@ export function DrawingInterface() {
     }
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!drawing || !lastPosRef.current) return
+      if (!drawing || !lastPosRef.current || !ctx) return
 
       const rect = canvas.getBoundingClientRect()
       const x = e.clientX - rect.left
@@ -160,7 +154,7 @@ export function DrawingInterface() {
 
   return (
     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70">
-      <canvas ref={canvasRef} width={1024} height={768} className="border-2 border-gray-800 bg-white shadow-2xl" />
+      <canvas ref={canvasRef} width={800} height={600} className="border-2 border-gray-800 bg-white shadow-2xl" />
       <div className="mt-5 flex flex-wrap items-center justify-center gap-5 rounded bg-white/95 p-4 shadow-lg">
         <div className="flex flex-col items-center">
           <label htmlFor="colorPicker" className="mb-2 text-sm font-medium uppercase text-gray-700">
