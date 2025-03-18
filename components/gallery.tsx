@@ -616,24 +616,24 @@ export default function Gallery({ username }: GalleryProps) {
       function setupDefaultCanvas(ctx: CanvasRenderingContext2D) {
         // Fill with white
         ctx.fillStyle = "white"
-        ctx.fillRect(0, 0, 1024, 768)
+        ctx.fillRect(0, 0, 800, 600)
 
         // Add grid pattern
         ctx.strokeStyle = "#f0f0f0"
         ctx.lineWidth = 1
 
         // Grid lines
-        for (let x = 0; x <= 1024; x += 50) {
+        for (let x = 0; x <= 800; x += 50) {
           ctx.beginPath()
           ctx.moveTo(x, 0)
-          ctx.lineTo(x, 768)
+          ctx.lineTo(x, 600)
           ctx.stroke()
         }
 
-        for (let y = 0; y <= 768; y += 50) {
+        for (let y = 0; y <= 600; y += 50) {
           ctx.beginPath()
           ctx.moveTo(0, y)
-          ctx.lineTo(1024, y)
+          ctx.lineTo(800, y)
           ctx.stroke()
         }
       }
@@ -658,8 +658,8 @@ export default function Gallery({ username }: GalleryProps) {
 
       // Create a blank canvas texture or load from localStorage
       const offScreenCanvas = document.createElement("canvas")
-      offScreenCanvas.width = 1024
-      offScreenCanvas.height = 768
+      offScreenCanvas.width = 800
+      offScreenCanvas.height = 600
       const offCtx = offScreenCanvas.getContext("2d")
 
       if (offCtx) {
@@ -850,7 +850,10 @@ export default function Gallery({ username }: GalleryProps) {
       }
 
       // Create new player model
-      const playerModel = new PlayerModel(color, new THREE.Vector3(position.x, position.y, position.z))
+      const playerModel = new PlayerModel(
+        color,
+        new THREE.Vector3(position.x, 0, position.z), // Set y to 0 to ensure player is on the ground
+      )
 
       const nameSprite = new TextSprite(
         playerName,
@@ -1161,7 +1164,12 @@ export default function Gallery({ username }: GalleryProps) {
       if (playerModelsRef.current[playerId]) {
         const { model, nameSprite } = playerModelsRef.current[playerId]
 
-        model.position.set(moveData.position.x, moveData.position.y, moveData.position.z)
+        // Set position ensuring y is 0 to keep player on the ground
+        model.position.set(
+          moveData.position.x,
+          0, // Force y to 0 to keep player on ground
+          moveData.position.z,
+        )
 
         model.rotation.y = moveData.rotation
 
@@ -1183,6 +1191,9 @@ export default function Gallery({ username }: GalleryProps) {
       const offCtx = offScreenCanvas.getContext("2d")
 
       if (offCtx) {
+        // Clear the canvas first
+        offCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
+
         const img = new Image()
         img.crossOrigin = "anonymous"
         img.onload = () => {
@@ -1280,6 +1291,9 @@ export default function Gallery({ username }: GalleryProps) {
       const offCtx = offScreenCanvas.getContext("2d")
 
       if (offCtx) {
+        // Clear the canvas first to ensure clean drawing
+        offCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
+
         // Copy drawing to the texture
         offCtx.drawImage(drawingCanvas, 0, 0, offScreenCanvas.width, offScreenCanvas.height)
 
