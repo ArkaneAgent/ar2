@@ -29,6 +29,8 @@ interface GalleryProps {
 declare global {
   interface Window {
     exitDrawingMode: (canvas: HTMLCanvasElement) => void
+    debugPlayers: () => void
+    forceReconnect: () => void
   }
 }
 
@@ -36,6 +38,7 @@ export default function Gallery({ username }: GalleryProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const peerRef = useRef<Peer | null>(null)
   const connectionsRef = useRef<Record<string, Peer.DataConnection>>({})
+  const pendingConnectionsRef = useRef<Record<string, boolean>>({})
   const [started, setStarted] = useState(false)
   const [drawingMode, setDrawingMode] = useState(false)
   const [nearbyCanvas, setNearbyCanvas] = useState<THREE.Mesh | null>(null)
@@ -48,6 +51,9 @@ export default function Gallery({ username }: GalleryProps) {
   const [connectionStatus, setConnectionStatus] = useState("Initializing...")
   const sceneRef = useRef<THREE.Scene | null>(null)
   const knownPeersRef = useRef<Set<string>>(new Set())
+  const playerModelsRef = useRef<Record<string, { model: PlayerModel; nameSprite: TextSprite }>>({})
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const [debugInfo, setDebugInfo] = useState("")
 
   // Scene setup
   useEffect(() => {
@@ -132,9 +138,13 @@ export default function Gallery({ username }: GalleryProps) {
           break
         // Add debug key to log all players
         case "KeyP":
-          console.log("Current players:", players)
-          console.log("Known peers:", Array.from(knownPeersRef.current))
-          console.log("Active connections:", Object.keys(connectionsRef.current))
+          debugPlayers()
+          break
+        // Add reconnect key
+        case "KeyR":
+          if (event.ctrlKey) {
+            forceReconnect()
+          }
           break
       }
     }
@@ -207,6 +217,79 @@ export default function Gallery({ username }: GalleryProps) {
 
     // Setup peer connection for multiplayer
     setupPeerConnection()
+
+    // Debug function to log all players
+    function debugPlayers() {
+      console.log("Current players:", players)
+      console.log("Known peers:", Array.from(knownPeersRef.current))
+      console.log("Active connections:", Object.keys(connectionsRef.current))
+      console.log("Pending connections:", pendingConnectionsRef.current)
+      console.log("Player models:", playerModelsRef.current)
+
+      // Count player models in scene
+      let playerModelCount = 0
+      scene.traverse((object) => {
+        if (object instanceof PlayerModel) {
+          playerModelCount++
+        }
+      })
+
+      console.log("Player models in scene:", playerModelCount)
+
+      // Update debug info
+      setDebugInfo(
+        `Players: ${Object.keys(players).length}, Models: ${playerModelCount}, Connections: ${Object.keys(connectionsRef.current).length}`,
+      )
+    }
+
+    // Expose debug function to window
+    window.debugPlayers = debugPlayers
+
+    // Force reconnect function
+    function forceReconnect() {
+      console.log("Forcing reconnection...")
+      setConnectionStatus("Forcing reconnection...")
+
+      // Destroy current peer
+      if (peerRef.current) {
+        peerRef.current.destroy()
+        peerRef.current = null
+      }
+
+      // Clear all connections
+      connectionsRef.current = {}
+      pendingConnectionsRef.current = {}
+
+      // Remove all player models except our own
+      Object.entries(playerModelsRef.current).forEach(([id, { model, nameSprite }]) => {
+        if (id !== myId) {
+          scene.remove(model)
+          scene.remove(nameSprite)
+          delete playerModelsRef.current[id]
+        }
+      })
+
+      // Reset players state except our own
+      setPlayers((prev) => {
+        const newPlayers: Record<string, Player> = {}
+        if (myId && prev[myId]) {
+          newPlayers[myId] = prev[myId]
+        }
+        return newPlayers
+      })
+
+      // Reset known peers except our own
+      knownPeersRef.current = new Set()
+      if (myId) {
+        knownPeersRef.current.add(myId)
+      }
+
+      // Setup new peer connection
+      setupPeerConnection()
+    }
+
+    // Expose reconnect function to window
+    window.forceReconnect = forceReconnect
 
     // Animation loop
     let prevTime = performance.now()
@@ -297,17 +380,15 @@ export default function Gallery({ username }: GalleryProps) {
       playerRotationRef.current = camera.rotation.y
 
       // Update our own player model if it exists
-      if (myId && players[myId]?.model) {
-        players[myId].model.position.copy(playerPosition)
-        players[myId].model.rotation.y = camera.rotation.y
-
-        if (players[myId].nameSprite) {
-          players[myId].nameSprite.position.set(
-            playerPosition.x,
-            playerPosition.y + 2.9, // Increased height for name tag
-            playerPosition.z,
-          )
-        }
+      if (myId && playerModelsRef.current[myId]) {
+        const { model, nameSprite } = playerModelsRef.current[myId]
+        model.position.copy(playerPosition)
+        model.rotation.y = camera.rotation.y
+        nameSprite.position.set(
+          playerPosition.x,
+          playerPosition.y + 2.9, // Increased height for name tag
+          playerPosition.z,
+        )
       }
 
       // Check for canvas interaction
@@ -318,18 +399,24 @@ export default function Gallery({ username }: GalleryProps) {
         lastUpdateTime = time
 
         // Send position update to all connected peers
-        Object.values(connectionsRef.current).forEach((conn) => {
-          conn.send({
-            type: "playerMove",
-            data: {
-              position: {
-                x: playerPosition.x,
-                y: playerPosition.y,
-                z: playerPosition.z,
-              },
-              rotation: camera.rotation.y,
-            },
-          })
+        Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
+          if (conn.open) {
+            try {
+              conn.send({
+                type: "playerMove",
+                data: {
+                  position: {
+                    x: playerPosition.x,
+                    y: playerPosition.y,
+                    z: playerPosition.z,
+                  },
+                  rotation: camera.rotation.y,
+                },
+              })
+            } catch (err) {
+              console.error(`Error sending position update to ${peerId}:`, err)
+            }
+          }
         })
       }
 
@@ -645,9 +732,6 @@ export default function Gallery({ username }: GalleryProps) {
         const canvasObject = intersects[0].object as THREE.Mesh
         setNearbyCanvas(canvasObject)
         setInteractionPrompt("Press E to draw on canvas")
-
-        // Debug info
-        console.log("Looking at canvas:", canvasObject.userData.id, "Distance:", intersects[0].distance)
       } else {
         setNearbyCanvas(null)
         setInteractionPrompt("")
@@ -661,12 +745,15 @@ export default function Gallery({ username }: GalleryProps) {
     }
 
     function setupPeerConnection() {
+      // Generate a random peer ID with a prefix to avoid collisions
+      const randomId = `gallery-${Math.random().toString(36).substring(2, 10)}-${Date.now().toString(36)}`
+
       // Generate a random color for this player
       const playerColor = getRandomColor()
 
       // Create a new Peer with more reliable configuration
-      const peer = new Peer({
-        debug: 2,
+      const peer = new Peer(randomId, {
+        debug: 1, // Reduced debug level
         config: {
           iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
@@ -687,40 +774,14 @@ export default function Gallery({ username }: GalleryProps) {
         setMyId(id)
         setConnectionStatus("Connected as: " + id)
 
-        // Join the gallery by connecting to a signaling server or known peers
-        joinGallery(id, playerColor)
+        // Add ourselves to known peers
+        knownPeersRef.current.add(id)
 
-        // Create a player model for ourselves (so others can see us)
-        const playerModel = new PlayerModel(
-          playerColor,
-          new THREE.Vector3(playerPosition.x, playerPosition.y, playerPosition.z),
-        )
+        // Create a player model for ourselves
+        createPlayerModel(id, username, playerColor, playerPosition)
 
-        const nameSprite = new TextSprite(
-          username,
-          new THREE.Vector3(
-            playerPosition.x,
-            playerPosition.y + 2.2, // Position above player
-            playerPosition.z,
-          ),
-        )
-
-        scene.add(playerModel)
-        scene.add(nameSprite)
-
-        // Add ourselves to the players list
-        setPlayers((prev) => ({
-          ...prev,
-          [id]: {
-            id,
-            username,
-            position: new THREE.Vector3(playerPosition.x, playerPosition.y, playerPosition.z),
-            rotation: playerRotationRef.current,
-            color: playerColor,
-            model: playerModel,
-            nameSprite,
-          },
-        }))
+        // Join the gallery by connecting to peers from URL
+        joinGallery(id)
       })
 
       // Handle incoming connections
@@ -731,73 +792,108 @@ export default function Gallery({ username }: GalleryProps) {
         // Store the connection
         connectionsRef.current[conn.peer] = conn
 
+        // Mark as no longer pending
+        delete pendingConnectionsRef.current[conn.peer]
+
         // Handle data from this peer
         setupConnectionHandlers(conn)
-
-        // Send our info to the new peer
-        conn.on("open", () => {
-          // Add to known peers
-          knownPeersRef.current.add(conn.peer)
-
-          // Send our player info
-          conn.send({
-            type: "playerInfo",
-            data: {
-              id: peer.id,
-              username,
-              position: {
-                x: playerPosition.x,
-                y: playerPosition.y,
-                z: playerPosition.z,
-              },
-              rotation: playerRotationRef.current,
-              color: playerColor,
-            },
-          })
-
-          // Send canvas data
-          canvases.forEach((canvas) => {
-            const canvasId = canvas.userData.id
-            const savedData = localStorage.getItem(`canvas-${canvasId}`)
-
-            if (savedData) {
-              conn.send({
-                type: "canvasData",
-                data: {
-                  canvasId,
-                  imageData: savedData,
-                },
-              })
-            }
-          })
-
-          // Request a list of all peers from the new connection
-          conn.send({
-            type: "requestPeerList",
-            data: {},
-          })
-        })
       })
 
       // Handle errors
       peer.on("error", (err) => {
         console.error("Peer error:", err)
         setConnectionStatus("Error: " + err.type)
+
+        // If it's a network error, try to reconnect
+        if (err.type === "network" || err.type === "server-error" || err.type === "socket-error") {
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current)
+          }
+
+          reconnectTimeoutRef.current = setTimeout(() => {
+            console.log("Attempting to reconnect after error...")
+            setConnectionStatus("Reconnecting after error...")
+            forceReconnect()
+          }, 5000)
+        }
+      })
+
+      // Handle disconnection
+      peer.on("disconnected", () => {
+        console.log("Disconnected from server. Attempting to reconnect...")
+        setConnectionStatus("Disconnected from server. Attempting to reconnect...")
+
+        // Try to reconnect
+        peer.reconnect()
+
+        // If reconnection fails, force a full reconnect after a timeout
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current)
+        }
+
+        reconnectTimeoutRef.current = setTimeout(() => {
+          if (peer.disconnected) {
+            console.log("Reconnection failed. Forcing full reconnect...")
+            forceReconnect()
+          }
+        }, 5000)
       })
 
       return peer
     }
 
-    function joinGallery(peerId: string, playerColor: string) {
-      // In a real application, you would have a signaling server to discover peers
-      // For simplicity, we'll use a hardcoded list of known peers or a URL parameter
+    function createPlayerModel(id: string, playerName: string, color: string, position: THREE.Vector3) {
+      // Remove existing model if it exists
+      if (playerModelsRef.current[id]) {
+        scene.remove(playerModelsRef.current[id].model)
+        scene.remove(playerModelsRef.current[id].nameSprite)
+      }
 
-      // Check if there's a peer ID in the URL to connect to (using shorter parameter name)
+      // Create new player model
+      const playerModel = new PlayerModel(color, new THREE.Vector3(position.x, position.y, position.z))
+
+      const nameSprite = new TextSprite(
+        playerName,
+        new THREE.Vector3(
+          position.x,
+          position.y + 2.2, // Position above player
+          position.z,
+        ),
+      )
+
+      scene.add(playerModel)
+      scene.add(nameSprite)
+
+      // Store the model and sprite
+      playerModelsRef.current[id] = {
+        model: playerModel,
+        nameSprite,
+      }
+
+      // Update players state
+      setPlayers((prev) => ({
+        ...prev,
+        [id]: {
+          id,
+          username: playerName,
+          position: new THREE.Vector3(position.x, position.y, position.z),
+          rotation: 0,
+          color,
+          model: playerModel,
+          nameSprite,
+        },
+      }))
+
+      return { model: playerModel, nameSprite }
+    }
+
+    function joinGallery(peerId: string) {
+      // Check if there's a peer ID in the URL to connect to
       const urlParams = new URLSearchParams(window.location.search)
       const connectToPeer = urlParams.get("p") || urlParams.get("peer") // Support both formats
 
       if (connectToPeer && connectToPeer !== peerId) {
-        // Connect to the specified peer
+        // Connect to the specified peer(s)
         connectToPeer.split(",").forEach((targetPeerId) => {
           if (targetPeerId && targetPeerId !== peerId) {
             connectToPeerById(targetPeerId)
@@ -805,7 +901,7 @@ export default function Gallery({ username }: GalleryProps) {
         })
       }
 
-      // Update the URL with our peer ID for others to connect - make it shorter
+      // Update the URL with our peer ID for others to connect
       const baseUrl = window.location.origin + window.location.pathname
       const newUrl = `${baseUrl}?p=${peerId}`
       window.history.replaceState({}, "", newUrl)
@@ -816,77 +912,183 @@ export default function Gallery({ username }: GalleryProps) {
     }
 
     function connectToPeerById(targetPeerId: string) {
-      if (!peerRef.current) return
+      if (!peerRef.current || pendingConnectionsRef.current[targetPeerId]) return
 
       console.log("Connecting to peer:", targetPeerId)
       setConnectionStatus("Connecting to: " + targetPeerId)
 
-      // Connect to the target peer
-      const conn = peerRef.current.connect(targetPeerId)
+      // Mark as pending
+      pendingConnectionsRef.current[targetPeerId] = true
 
-      // Store the connection
-      connectionsRef.current[targetPeerId] = conn
+      try {
+        // Connect to the target peer
+        const conn = peerRef.current.connect(targetPeerId, {
+          reliable: true,
+          serialization: "json",
+        })
 
-      // Setup handlers for this connection
-      setupConnectionHandlers(conn)
+        // Store the connection
+        connectionsRef.current[targetPeerId] = conn
+
+        // Setup handlers for this connection
+        setupConnectionHandlers(conn)
+
+        // Set a timeout to clear pending status if connection fails
+        setTimeout(() => {
+          if (pendingConnectionsRef.current[targetPeerId]) {
+            console.log("Connection to", targetPeerId, "timed out")
+            delete pendingConnectionsRef.current[targetPeerId]
+
+            // Try to reconnect
+            if (!connectionsRef.current[targetPeerId]?.open) {
+              delete connectionsRef.current[targetPeerId]
+              connectToPeerById(targetPeerId)
+            }
+          }
+        }, 10000)
+      } catch (err) {
+        console.error("Error connecting to peer:", err)
+        delete pendingConnectionsRef.current[targetPeerId]
+      }
     }
 
     function setupConnectionHandlers(conn: Peer.DataConnection) {
-      conn.on("data", (data: any) => {
-        // Handle different message types
-        switch (data.type) {
-          case "playerInfo":
-            handlePlayerInfo(data.data)
-            break
+      // Handle connection open
+      conn.on("open", () => {
+        console.log("Connection established with:", conn.peer)
+        setConnectionStatus("Connected to: " + conn.peer)
 
-          case "playerMove":
-            handlePlayerMove(conn.peer, data.data)
-            break
+        // No longer pending
+        delete pendingConnectionsRef.current[conn.peer]
 
-          case "canvasData":
-            handleCanvasData(data.data)
-            break
+        // Add to known peers
+        knownPeersRef.current.add(conn.peer)
 
-          case "updateCanvas":
-            handleCanvasUpdate(data.data)
-            break
-
-          case "playerLeft":
-            handlePlayerLeft(data.data.id)
-            break
-
-          case "requestPeerList":
-            // Send our list of known peers to the requester
-            conn.send({
-              type: "peerList",
-              data: {
-                peers: Array.from(knownPeersRef.current),
+        // Send our player info
+        try {
+          conn.send({
+            type: "playerInfo",
+            data: {
+              id: peerRef.current?.id,
+              username,
+              position: {
+                x: playerPosition.x,
+                y: playerPosition.y,
+                z: playerPosition.z,
               },
-            })
-            break
+              rotation: playerRotationRef.current,
+              color: playerModelsRef.current[myId]?.model
+                ? (playerModelsRef.current[myId].model as any).material?.color?.getHexString()
+                : getRandomColor(),
+            },
+          })
+        } catch (err) {
+          console.error("Error sending player info:", err)
+        }
 
-          case "peerList":
-            // Connect to all peers we don't know yet
-            if (data.data.peers && Array.isArray(data.data.peers)) {
-              data.data.peers.forEach((peerId: string) => {
-                // Skip ourselves and peers we already know
-                if (peerId !== myId && !knownPeersRef.current.has(peerId) && !connectionsRef.current[peerId]) {
-                  console.log("Discovered new peer from peer list:", peerId)
-                  connectToPeerById(peerId)
-                  knownPeersRef.current.add(peerId)
-                }
+        // Request peer list
+        try {
+          conn.send({
+            type: "requestPeerList",
+            data: {},
+          })
+        } catch (err) {
+          console.error("Error requesting peer list:", err)
+        }
+
+        // Send canvas data
+        canvases.forEach((canvas) => {
+          const canvasId = canvas.userData.id
+          const savedData = localStorage.getItem(`canvas-${canvasId}`)
+
+          if (savedData) {
+            try {
+              conn.send({
+                type: "canvasData",
+                data: {
+                  canvasId,
+                  imageData: savedData,
+                },
               })
+            } catch (err) {
+              console.error("Error sending canvas data:", err)
             }
-            break
+          }
+        })
+      })
+
+      // Handle data messages
+      conn.on("data", (data: any) => {
+        try {
+          // Handle different message types
+          switch (data.type) {
+            case "playerInfo":
+              handlePlayerInfo(data.data)
+              break
+
+            case "playerMove":
+              handlePlayerMove(conn.peer, data.data)
+              break
+
+            case "canvasData":
+              handleCanvasData(data.data)
+              break
+
+            case "updateCanvas":
+              handleCanvasUpdate(data.data)
+              break
+
+            case "playerLeft":
+              handlePlayerLeft(data.data.id)
+              break
+
+            case "requestPeerList":
+              // Send our list of known peers to the requester
+              if (conn.open) {
+                try {
+                  conn.send({
+                    type: "peerList",
+                    data: {
+                      peers: Array.from(knownPeersRef.current),
+                    },
+                  })
+                } catch (err) {
+                  console.error("Error sending peer list:", err)
+                }
+              }
+              break
+
+            case "peerList":
+              // Connect to all peers we don't know yet
+              if (data.data.peers && Array.isArray(data.data.peers)) {
+                data.data.peers.forEach((peerId: string) => {
+                  // Skip ourselves and peers we already know
+                  if (
+                    peerId !== myId &&
+                    !knownPeersRef.current.has(peerId) &&
+                    !connectionsRef.current[peerId] &&
+                    !pendingConnectionsRef.current[peerId]
+                  ) {
+                    console.log("Discovered new peer from peer list:", peerId)
+                    connectToPeerById(peerId)
+                  }
+                })
+              }
+              break
+          }
+        } catch (err) {
+          console.error("Error handling data:", err)
         }
       })
 
+      // Handle connection close
       conn.on("close", () => {
         console.log("Connection closed with peer:", conn.peer)
         setConnectionStatus("Connection closed with: " + conn.peer)
 
         // Remove the connection
         delete connectionsRef.current[conn.peer]
+        delete pendingConnectionsRef.current[conn.peer]
 
         // Remove the player
         handlePlayerLeft(conn.peer)
@@ -895,51 +1097,51 @@ export default function Gallery({ username }: GalleryProps) {
         knownPeersRef.current.delete(conn.peer)
       })
 
+      // Handle connection errors
       conn.on("error", (err) => {
-        console.error("Connection error:", err)
-        setConnectionStatus("Connection error: " + err)
+        console.error("Connection error with", conn.peer, ":", err)
+        setConnectionStatus("Connection error with " + conn.peer)
+
+        // Remove pending status
+        delete pendingConnectionsRef.current[conn.peer]
+
+        // Try to reconnect if the connection is not open
+        if (!conn.open) {
+          delete connectionsRef.current[conn.peer]
+
+          // Wait a bit before trying to reconnect
+          setTimeout(() => {
+            if (knownPeersRef.current.has(conn.peer) && !connectionsRef.current[conn.peer]) {
+              console.log("Attempting to reconnect to", conn.peer)
+              connectToPeerById(conn.peer)
+            }
+          }, 3000)
+        }
       })
     }
 
     function handlePlayerInfo(playerData: any) {
+      if (!playerData || !playerData.id) {
+        console.error("Invalid player data:", playerData)
+        return
+      }
+
       console.log("Received player info:", playerData)
 
       // Add to known peers
-      if (playerData.id) {
-        knownPeersRef.current.add(playerData.id)
-      }
+      knownPeersRef.current.add(playerData.id)
 
-      // Create a new player model
-      const playerModel = new PlayerModel(
-        playerData.color,
-        new THREE.Vector3(playerData.position.x, playerData.position.y, playerData.position.z),
-      )
+      // Create player position vector
+      const playerPosition = new THREE.Vector3(playerData.position.x, playerData.position.y, playerData.position.z)
 
-      const nameSprite = new TextSprite(
-        playerData.username,
-        new THREE.Vector3(
-          playerData.position.x,
-          playerData.position.y + 2.2, // Position above player
-          playerData.position.z,
-        ),
-      )
-
-      scene.add(playerModel)
-      scene.add(nameSprite)
-
-      // Add to players list
-      setPlayers((prev) => ({
-        ...prev,
-        [playerData.id]: {
-          ...playerData,
-          position: new THREE.Vector3(playerData.position.x, playerData.position.y, playerData.position.z),
-          model: playerModel,
-          nameSprite,
-        },
-      }))
+      // Create or update player model
+      createPlayerModel(playerData.id, playerData.username, playerData.color, playerPosition)
     }
 
     function handlePlayerMove(playerId: string, moveData: any) {
+      if (!playerId || !moveData) return
+
+      // Update player position in state
       setPlayers((prev) => {
         if (!prev[playerId]) return prev
 
@@ -949,28 +1151,27 @@ export default function Gallery({ username }: GalleryProps) {
           rotation: moveData.rotation,
         }
 
-        // Update model and name sprite positions
-        if (updatedPlayer.model) {
-          updatedPlayer.model.position.copy(updatedPlayer.position)
-          updatedPlayer.model.rotation.y = updatedPlayer.rotation
-        }
-
-        if (updatedPlayer.nameSprite) {
-          updatedPlayer.nameSprite.position.set(
-            updatedPlayer.position.x,
-            updatedPlayer.position.y + 2.2,
-            updatedPlayer.position.z,
-          )
-        }
-
         return {
           ...prev,
           [playerId]: updatedPlayer,
         }
       })
+
+      // Update player model directly for better performance
+      if (playerModelsRef.current[playerId]) {
+        const { model, nameSprite } = playerModelsRef.current[playerId]
+
+        model.position.set(moveData.position.x, moveData.position.y, moveData.position.z)
+
+        model.rotation.y = moveData.rotation
+
+        nameSprite.position.set(moveData.position.x, moveData.position.y + 2.2, moveData.position.z)
+      }
     }
 
     function handleCanvasData(data: any) {
+      if (!data || !data.canvasId) return
+
       const { canvasId, imageData } = data
 
       // Find the canvas
@@ -1022,31 +1223,41 @@ export default function Gallery({ username }: GalleryProps) {
       handleCanvasData(data)
 
       // Forward to other peers
-      Object.values(connectionsRef.current).forEach((conn) => {
-        conn.send({
-          type: "canvasData",
-          data,
-        })
+      Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
+        if (conn.open) {
+          try {
+            conn.send({
+              type: "canvasData",
+              data,
+            })
+          } catch (err) {
+            console.error(`Error forwarding canvas update to ${peerId}:`, err)
+          }
+        }
       })
     }
 
     function handlePlayerLeft(playerId: string) {
+      if (!playerId) return
+
+      console.log("Player left:", playerId)
+
+      // Remove player model and sprite from scene
+      if (playerModelsRef.current[playerId]) {
+        scene.remove(playerModelsRef.current[playerId].model)
+        scene.remove(playerModelsRef.current[playerId].nameSprite)
+        delete playerModelsRef.current[playerId]
+      }
+
+      // Remove from players state
       setPlayers((prev) => {
-        if (!prev[playerId]) return prev
-
-        // Remove player model and name sprite from scene
-        if (prev[playerId].model) {
-          scene.remove(prev[playerId].model)
-        }
-
-        if (prev[playerId].nameSprite) {
-          scene.remove(prev[playerId].nameSprite)
-        }
-
         const newPlayers = { ...prev }
         delete newPlayers[playerId]
         return newPlayers
       })
+
+      // Remove from known peers
+      knownPeersRef.current.delete(playerId)
     }
 
     // Helper function to generate random color
@@ -1087,14 +1298,20 @@ export default function Gallery({ username }: GalleryProps) {
         localStorage.setItem(`canvas-${canvasId}`, JSON.stringify(canvasData))
 
         // Broadcast to other peers
-        Object.values(connectionsRef.current).forEach((conn) => {
-          conn.send({
-            type: "updateCanvas",
-            data: {
-              canvasId,
-              imageData,
-            },
-          })
+        Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
+          if (conn.open) {
+            try {
+              conn.send({
+                type: "updateCanvas",
+                data: {
+                  canvasId,
+                  imageData,
+                },
+              })
+            } catch (err) {
+              console.error(`Error sending canvas update to ${peerId}:`, err)
+            }
+          }
         })
       }
 
@@ -1125,6 +1342,10 @@ export default function Gallery({ username }: GalleryProps) {
         peerRef.current.destroy()
       }
 
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+      }
+
       renderer.dispose()
     }
   }, [username])
@@ -1143,7 +1364,9 @@ export default function Gallery({ username }: GalleryProps) {
           <p className="text-xs">{window.location.href}</p>
           <p className="mt-2 text-xs">Connection status: {connectionStatus}</p>
           <p className="text-xs">Connected players: {Object.keys(players).length}</p>
+          <p className="text-xs">Debug: {debugInfo}</p>
           <p className="text-xs">Press P to debug connections</p>
+          <p className="text-xs">Press Ctrl+R to force reconnect</p>
         </div>
       )}
     </div>
