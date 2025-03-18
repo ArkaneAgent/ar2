@@ -124,7 +124,7 @@ export default function Gallery({ username }: GalleryProps) {
             canJump = false
           }
           break
-        case "KeyE":
+        case "KeyR":
           if (nearbyCanvas && !drawingMode && controls.isLocked) {
             console.log("Entering drawing mode for canvas:", nearbyCanvas.userData?.id)
             enterDrawingMode(nearbyCanvas)
@@ -729,8 +729,19 @@ export default function Gallery({ username }: GalleryProps) {
       if (intersects.length > 0 && intersects[0].distance < 3) {
         const canvasObject = intersects[0].object as THREE.Mesh
         setNearbyCanvas(canvasObject)
-        setInteractionPrompt("Press E to draw on canvas")
+        setInteractionPrompt("Press R or click to draw on canvas")
         document.body.style.cursor = "pointer"
+
+        // Add click handler for the canvas
+        if (controls.isLocked && !drawingMode) {
+          const handleCanvasClick = () => {
+            console.log("Canvas clicked:", canvasObject.userData?.id)
+            enterDrawingMode(canvasObject)
+            document.removeEventListener("click", handleCanvasClick)
+          }
+
+          document.addEventListener("click", handleCanvasClick, { once: true })
+        }
       } else {
         if (nearbyCanvas) {
           setNearbyCanvas(null)
@@ -755,95 +766,16 @@ export default function Gallery({ username }: GalleryProps) {
       // Generate a random color for this player
       const playerColor = getRandomColor()
 
-      // Create a new Peer with more reliable configuration
+      // Create a new Peer with simplified configuration
       const peer = new Peer(randomId, {
-        debug: 1, // Reduced debug level
+        debug: 0, // Minimal debug level
         config: {
-          iceServers: [
-            { urls: "stun:stun.l.google.com:19302" },
-            { urls: "stun:global.stun.twilio.com:3478" },
-            { urls: "stun:stun1.l.google.com:19302" },
-            { urls: "stun:stun2.l.google.com:19302" },
-            { urls: "stun:stun3.l.google.com:19302" },
-            { urls: "stun:stun4.l.google.com:19302" },
-          ],
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:global.stun.twilio.com:3478" }],
         },
       })
 
+      console.log("Setting up new peer connection with ID:", randomId)
       peerRef.current = peer
-
-      // On connection established
-      peer.on("open", (id) => {
-        console.log("My peer ID is:", id)
-        setMyId(id)
-        setConnectionStatus("Connected as: " + id)
-
-        // Add ourselves to known peers
-        knownPeersRef.current.add(id)
-
-        // Create a player model for ourselves
-        createPlayerModel(id, username, playerColor, playerPosition)
-
-        // Join the gallery by connecting to peers from URL
-        joinGallery(id)
-      })
-
-      // Handle incoming connections
-      peer.on("connection", (conn) => {
-        console.log("Incoming connection from:", conn.peer)
-        setConnectionStatus("Incoming connection from: " + conn.peer)
-
-        // Store the connection
-        connectionsRef.current[conn.peer] = conn
-
-        // Mark as no longer pending
-        delete pendingConnectionsRef.current[conn.peer]
-
-        // Handle data from this peer
-        setupConnectionHandlers(conn)
-      })
-
-      // Handle errors
-      peer.on("error", (err) => {
-        console.error("Peer error:", err)
-        setConnectionStatus("Error: " + err.type)
-
-        // If it's a network error, try to reconnect
-        if (err.type === "network" || err.type === "server-error" || err.type === "socket-error") {
-          if (reconnectTimeoutRef.current) {
-            clearTimeout(reconnectTimeoutRef.current)
-          }
-
-          reconnectTimeoutRef.current = setTimeout(() => {
-            console.log("Attempting to reconnect after error...")
-            setConnectionStatus("Reconnecting after error...")
-            forceReconnect()
-          }, 5000)
-        }
-      })
-
-      // Handle disconnection
-      peer.on("disconnected", () => {
-        console.log("Disconnected from server. Attempting to reconnect...")
-        setConnectionStatus("Disconnected from server. Attempting to reconnect...")
-
-        // Try to reconnect
-        peer.reconnect()
-
-        // If reconnection fails, force a full reconnect after a timeout
-        if (reconnectTimeoutRef.current) {
-          clearTimeout(reconnectTimeoutRef.current)
-        }
-
-        reconnectTimeoutRef.current = setTimeout(() => {
-          if (peer.disconnected) {
-            console.log("Reconnection failed. Forcing full reconnect...")
-            forceReconnect()
-          }
-        }, 5000)
-      })
-
-      return peer
     }
 
     function createPlayerModel(id: string, playerName: string, color: string, position: THREE.Vector3) {
@@ -899,19 +831,25 @@ export default function Gallery({ username }: GalleryProps) {
       const urlParams = new URLSearchParams(window.location.search)
       const connectToPeer = urlParams.get("p") || urlParams.get("peer") // Support both formats
 
+      console.log("Join gallery called with my ID:", peerId)
+      console.log("URL contains peer ID:", connectToPeer)
+
       if (connectToPeer && connectToPeer !== peerId) {
-        // Connect to the specified peer(s)
-        connectToPeer.split(",").forEach((targetPeerId) => {
-          if (targetPeerId && targetPeerId !== peerId) {
-            connectToPeerById(targetPeerId)
-          }
-        })
+        // Connect to the specified peer
+        console.log("Connecting to peer from URL:", connectToPeer)
+        connectToPeerById(connectToPeer)
       }
 
       // Update the URL with our peer ID for others to connect
       const baseUrl = window.location.origin + window.location.pathname
       const newUrl = `${baseUrl}?p=${peerId}`
-      window.history.replaceState({}, "", newUrl)
+
+      try {
+        window.history.replaceState({}, "", newUrl)
+        console.log("Updated URL to:", newUrl)
+      } catch (e) {
+        console.error("Failed to update URL:", e)
+      }
 
       // Display connection info
       console.log("Share this URL for others to join:", window.location.href)
@@ -973,10 +911,17 @@ export default function Gallery({ username }: GalleryProps) {
 
         // Send our player info
         try {
+          // Make sure we're using a consistent ID format
+          const playerColor = playerModelsRef.current[myId]?.model
+            ? (playerModelsRef.current[myId].model as any).children[0].material.color.getHexString()
+            : getRandomColor()
+
+          console.log("Sending player info with ID:", myId)
+
           conn.send({
             type: "playerInfo",
             data: {
-              id: myId, // Use myId directly instead of peerRef.current?.id
+              id: myId,
               username,
               position: {
                 x: playerPosition.x,
@@ -984,9 +929,7 @@ export default function Gallery({ username }: GalleryProps) {
                 z: playerPosition.z,
               },
               rotation: playerRotationRef.current,
-              color: playerModelsRef.current[myId]?.model
-                ? (playerModelsRef.current[myId].model as any).children[0].material.color.getHexString()
-                : getRandomColor(),
+              color: playerColor,
             },
           })
         } catch (err) {
@@ -1140,6 +1083,27 @@ export default function Gallery({ username }: GalleryProps) {
       }
 
       console.log("Received player info:", playerData)
+
+      // Check if we already have this player to prevent duplicates
+      const existingPlayer = Object.values(players).find(
+        (player) =>
+          player.id === playerData.id ||
+          (player.username === playerData.username &&
+            Math.abs(player.position.x - playerData.position.x) < 0.5 &&
+            Math.abs(player.position.z - playerData.position.z) < 0.5),
+      )
+
+      if (existingPlayer) {
+        console.log("Player already exists, updating instead of creating duplicate:", playerData.id)
+
+        // Just update the existing player's position
+        if (playerModelsRef.current[existingPlayer.id]) {
+          const { model, nameSprite } = playerModelsRef.current[existingPlayer.id]
+          model.position.set(playerData.position.x, 0, playerData.position.z)
+          nameSprite.position.set(playerData.position.x, playerData.position.y + 1.8, playerData.position.z)
+        }
+        return
+      }
 
       // Add to known peers
       knownPeersRef.current.add(playerData.id)
@@ -1386,7 +1350,16 @@ export default function Gallery({ username }: GalleryProps) {
 
   return (
     <div ref={containerRef} className="h-screen w-screen">
-      {!started && !drawingMode && <Instructions onClick={() => {}} />}
+      {!started && !drawingMode && (
+        <Instructions>
+          <p>Click to move</p>
+          <p>WASD - Move</p>
+          <p>Space - Jump</p>
+          <p>R - Draw on canvas (when near)</p>
+          <p>P - Debug connections</p>
+          <p>Ctrl+R - Force reconnect</p>
+        </Instructions>
+      )}
 
       {interactionPrompt && <InteractionPrompt text={interactionPrompt} />}
 
