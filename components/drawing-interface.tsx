@@ -125,7 +125,7 @@ export function DrawingInterface() {
     for (let y = 0; y <= canvas.height; y += 50) {
       ctx.beginPath()
       ctx.moveTo(0, y)
-      ctx.lineTo(canvas.width, y)
+      ctx.lineTo(800, y)
       ctx.stroke()
     }
   }
