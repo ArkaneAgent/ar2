@@ -52,6 +52,7 @@ export class PlayerModel extends THREE.Group {
     this.position.copy(position)
     // Ensure the player is exactly on the ground
     this.position.y = 0
+    console.log("Created player model at position:", position.x, 0, position.z)
   }
 
   // Add a new method to create googly eyes
