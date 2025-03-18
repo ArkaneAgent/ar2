@@ -45,6 +45,9 @@ export default function Gallery({ username }: GalleryProps) {
   const [myId, setMyId] = useState<string>("")
   const playerPositionRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 1.6, 5))
   const playerRotationRef = useRef<number>(0)
+  const [connectionStatus, setConnectionStatus] = useState("Initializing...")
+  const sceneRef = useRef<THREE.Scene | null>(null)
+  const knownPeersRef = useRef<Set<string>>(new Set())
 
   // Scene setup
   useEffect(() => {
@@ -53,6 +56,7 @@ export default function Gallery({ username }: GalleryProps) {
     // Scene setup
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0xffffff)
+    sceneRef.current = scene
 
     // Camera
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
@@ -125,6 +129,12 @@ export default function Gallery({ username }: GalleryProps) {
               isLocked: controls.isLocked,
             })
           }
+          break
+        // Add debug key to log all players
+        case "KeyP":
+          console.log("Current players:", players)
+          console.log("Known peers:", Array.from(knownPeersRef.current))
+          console.log("Active connections:", Object.keys(connectionsRef.current))
           break
       }
     }
@@ -577,6 +587,7 @@ export default function Gallery({ username }: GalleryProps) {
             if (savedData.timestamp && currentTime - savedData.timestamp < 1800000) {
               // Load the saved image
               const img = new Image()
+              img.crossOrigin = "anonymous"
               img.onload = () => {
                 offCtx.drawImage(img, 0, 0)
                 canvasTexture.needsUpdate = true
@@ -653,11 +664,18 @@ export default function Gallery({ username }: GalleryProps) {
       // Generate a random color for this player
       const playerColor = getRandomColor()
 
-      // Create a new Peer
+      // Create a new Peer with more reliable configuration
       const peer = new Peer({
         debug: 2,
         config: {
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:global.stun.twilio.com:3478" }],
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:global.stun.twilio.com:3478" },
+            { urls: "stun:stun1.l.google.com:19302" },
+            { urls: "stun:stun2.l.google.com:19302" },
+            { urls: "stun:stun3.l.google.com:19302" },
+            { urls: "stun:stun4.l.google.com:19302" },
+          ],
         },
       })
 
@@ -667,6 +685,7 @@ export default function Gallery({ username }: GalleryProps) {
       peer.on("open", (id) => {
         console.log("My peer ID is:", id)
         setMyId(id)
+        setConnectionStatus("Connected as: " + id)
 
         // Join the gallery by connecting to a signaling server or known peers
         joinGallery(id, playerColor)
@@ -707,6 +726,7 @@ export default function Gallery({ username }: GalleryProps) {
       // Handle incoming connections
       peer.on("connection", (conn) => {
         console.log("Incoming connection from:", conn.peer)
+        setConnectionStatus("Incoming connection from: " + conn.peer)
 
         // Store the connection
         connectionsRef.current[conn.peer] = conn
@@ -716,6 +736,9 @@ export default function Gallery({ username }: GalleryProps) {
 
         // Send our info to the new peer
         conn.on("open", () => {
+          // Add to known peers
+          knownPeersRef.current.add(conn.peer)
+
           // Send our player info
           conn.send({
             type: "playerInfo",
@@ -747,12 +770,19 @@ export default function Gallery({ username }: GalleryProps) {
               })
             }
           })
+
+          // Request a list of all peers from the new connection
+          conn.send({
+            type: "requestPeerList",
+            data: {},
+          })
         })
       })
 
       // Handle errors
       peer.on("error", (err) => {
         console.error("Peer error:", err)
+        setConnectionStatus("Error: " + err.type)
       })
 
       return peer
@@ -782,12 +812,14 @@ export default function Gallery({ username }: GalleryProps) {
 
       // Display connection info
       console.log("Share this URL for others to join:", window.location.href)
+      setConnectionStatus("Share URL: " + window.location.href)
     }
 
     function connectToPeerById(targetPeerId: string) {
       if (!peerRef.current) return
 
       console.log("Connecting to peer:", targetPeerId)
+      setConnectionStatus("Connecting to: " + targetPeerId)
 
       // Connect to the target peer
       const conn = peerRef.current.connect(targetPeerId)
@@ -822,25 +854,61 @@ export default function Gallery({ username }: GalleryProps) {
           case "playerLeft":
             handlePlayerLeft(data.data.id)
             break
+
+          case "requestPeerList":
+            // Send our list of known peers to the requester
+            conn.send({
+              type: "peerList",
+              data: {
+                peers: Array.from(knownPeersRef.current),
+              },
+            })
+            break
+
+          case "peerList":
+            // Connect to all peers we don't know yet
+            if (data.data.peers && Array.isArray(data.data.peers)) {
+              data.data.peers.forEach((peerId: string) => {
+                // Skip ourselves and peers we already know
+                if (peerId !== myId && !knownPeersRef.current.has(peerId) && !connectionsRef.current[peerId]) {
+                  console.log("Discovered new peer from peer list:", peerId)
+                  connectToPeerById(peerId)
+                  knownPeersRef.current.add(peerId)
+                }
+              })
+            }
+            break
         }
       })
 
       conn.on("close", () => {
         console.log("Connection closed with peer:", conn.peer)
+        setConnectionStatus("Connection closed with: " + conn.peer)
 
         // Remove the connection
         delete connectionsRef.current[conn.peer]
 
         // Remove the player
         handlePlayerLeft(conn.peer)
+
+        // Remove from known peers
+        knownPeersRef.current.delete(conn.peer)
       })
 
       conn.on("error", (err) => {
         console.error("Connection error:", err)
+        setConnectionStatus("Connection error: " + err)
       })
     }
 
     function handlePlayerInfo(playerData: any) {
+      console.log("Received player info:", playerData)
+
+      // Add to known peers
+      if (playerData.id) {
+        knownPeersRef.current.add(playerData.id)
+      }
+
       // Create a new player model
       const playerModel = new PlayerModel(
         playerData.color,
@@ -915,6 +983,7 @@ export default function Gallery({ username }: GalleryProps) {
 
       if (offCtx) {
         const img = new Image()
+        img.crossOrigin = "anonymous"
         img.onload = () => {
           offCtx.drawImage(img, 0, 0)
 
@@ -926,12 +995,25 @@ export default function Gallery({ username }: GalleryProps) {
 
           // Save to localStorage with timestamp to allow for expiration
           const canvasData = {
-            imageData,
+            imageData: img.src,
             timestamp: Date.now(),
           }
           localStorage.setItem(`canvas-${canvasId}`, JSON.stringify(canvasData))
         }
-        img.src = imageData
+
+        // Handle both direct image data and JSON strings
+        if (typeof imageData === "string") {
+          try {
+            // Try to parse as JSON first
+            const parsed = JSON.parse(imageData)
+            img.src = parsed.imageData || imageData
+          } catch (e) {
+            // If not JSON, use directly
+            img.src = imageData
+          }
+        } else if (imageData && imageData.imageData) {
+          img.src = imageData.imageData
+        }
       }
     }
 
@@ -1059,6 +1141,9 @@ export default function Gallery({ username }: GalleryProps) {
         <div className="absolute bottom-4 left-4 z-10 rounded bg-black/70 p-2 text-white">
           <p>Share this URL for others to join:</p>
           <p className="text-xs">{window.location.href}</p>
+          <p className="mt-2 text-xs">Connection status: {connectionStatus}</p>
+          <p className="text-xs">Connected players: {Object.keys(players).length}</p>
+          <p className="text-xs">Press P to debug connections</p>
         </div>
       )}
     </div>
