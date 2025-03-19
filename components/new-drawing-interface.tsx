@@ -127,10 +127,27 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
 
   const handleSaveAndClose = () => {
     if (canvasRef.current) {
-      const imageData = canvasRef.current.toDataURL("image/png")
-      onSave(imageData)
+      try {
+        // Get the image data with maximum quality
+        const imageData = canvasRef.current.toDataURL("image/png", 1.0)
+
+        // Log the size of the data for debugging
+        console.log(`Canvas data size: ${Math.round(imageData.length / 1024)} KB`)
+
+        // Save the drawing
+        onSave(imageData)
+
+        // Add a small delay before closing to ensure data is processed
+        setTimeout(() => {
+          onClose()
+        }, 100)
+      } catch (err) {
+        console.error("Error saving canvas:", err)
+        alert("There was an error saving your drawing. Please try again.")
+      }
+    } else {
+      onClose()
     }
-    onClose()
   }
 
   const handleClear = () => {
