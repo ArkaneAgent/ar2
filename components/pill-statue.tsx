@@ -1,6 +1,7 @@
 "use client"
 
 import * as THREE from "three"
+import { TextSprite } from "./text-sprite"
 
 export class PillStatue extends THREE.Group {
   constructor() {
@@ -130,6 +131,17 @@ export class PillStatue extends THREE.Group {
     spotlight.shadow.mapSize.height = 512
 
     this.add(spotlight)
+
+    // Add floating text above the statue
+    const floatingText = new TextSprite("$brush", {
+      fontFace: "Arial",
+      fontSize: 24,
+      textColor: "#ffffff",
+      backgroundColor: "rgba(0,0,0,0.5)",
+      padding: 10,
+    })
+    floatingText.position.set(0, capsuleRadius + capsuleLength + 1.5, 0) // Position above the statue
+    this.add(floatingText)
 
     // Position the statue
     this.position.set(0, 0, 0)
