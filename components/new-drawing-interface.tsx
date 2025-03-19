@@ -210,6 +210,13 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
         </div>
 
         <p className="mt-4 text-sm text-gray-500">Press ESC to save and exit</p>
+        {/* Add this right before the final closing div */}
+        <div className="mt-4 max-w-md text-center text-xs text-gray-500">
+          <p className="font-medium">About Drawing Persistence:</p>
+          <p>Drawings are saved in your browser's storage and shared with other players in your current session.</p>
+          <p>They will not appear in different lobbies or when joining with a different URL.</p>
+          <p>Drawings older than 30 minutes may be automatically cleared.</p>
+        </div>
       </div>
     </div>
   )
