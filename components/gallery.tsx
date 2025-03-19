@@ -58,6 +58,7 @@ export default function Gallery({ username }: GalleryProps) {
   const controlsRef = useRef<PointerLockControls | null>(null)
   const canvasesRef = useRef<THREE.Mesh[]>([])
   const [showWelcome, setShowWelcome] = useState(true)
+  const brushTextRef = useRef<TextSprite | null>(null)
 
   useEffect(() => {
     if (showWelcome) {
@@ -236,6 +237,20 @@ export default function Gallery({ username }: GalleryProps) {
     const pillStatue = new PillStatue()
     scene.add(pillStatue)
 
+    // Add "$brush" text above the pill statue
+    const brushText = new TextSprite(
+      "$brush",
+      new THREE.Vector3(0, 3.5, 0), // Position above the pill statue
+      {
+        fontSize: 24,
+        fontFace: "Arial",
+        textColor: { r: 255, g: 255, b: 255, a: 1.0 },
+        backgroundColor: { r: 0, g: 0, b: 0, a: 0.5 },
+      },
+    )
+    scene.add(brushText)
+    brushTextRef.current = brushText
+
     // Place canvases
     placeCanvases()
 
@@ -324,6 +339,12 @@ export default function Gallery({ username }: GalleryProps) {
 
       // Update pill statue rotation
       pillStatue.rotation.y += 0.005
+
+      // Update the brush text position to hover above the pill statue
+      if (brushTextRef.current) {
+        brushTextRef.current.position.set(0, 3.5, 0)
+        brushTextRef.current.rotation.y += 0.005 // Rotate with the statue
+      }
 
       // Skip movement if controls are not locked
       if (!controls.isLocked) {
@@ -1581,11 +1602,17 @@ export default function Gallery({ username }: GalleryProps) {
         }
 
         // Update players state
-        setPlayers((prev) => ({
-          ...prev[peerId],
-          position: new THREE.Vector3(data.position.x, data.position.y, data.position.z),
-          rotation: data.rotation,
-        }))
+        setPlayers((prev) => {
+          if (!prev[peerId]) return prev
+          return {
+            ...prev,
+            [peerId]: {
+              ...prev[peerId],
+              position: new THREE.Vector3(data.position.x, data.position.y, data.position.z),
+              rotation: data.rotation,
+            },
+          }
+        })
       }
     }
 
@@ -1734,19 +1761,20 @@ export default function Gallery({ username }: GalleryProps) {
           if (conn.open) {
             try {
               conn.send({
-              type: "updateCanvas",
-              data: {
-                canvasId,
-                imageData,
-              },
-            })
-          } catch (err) {
-            console.error(`Error sending canvas update to ${peerId}:`, err)
+                type: "updateCanvas",
+                data: {
+                  canvasId,
+                  imageData,
+                },
+              })
+            } catch (err) {
+              console.error(`Error sending canvas update to ${peerId}:`, err)
+            }
           }
-        }
-      })
+        })
+      }
+      img.src = imageData
     }
-    img.src = imageData
   }
 
   // Function to handle closing the drawing interface
