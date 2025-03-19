@@ -975,16 +975,20 @@ export default function Gallery({ username }: GalleryProps) {
         })
 
         // Request all canvas data after a delay to ensure connections are established
-        // Use a longer delay to ensure connections are fully established
         setTimeout(() => {
           console.log("Initial canvas data request after joining")
           requestAllCanvasData()
 
-          // Make a second request after another delay to ensure we get everything
+          // Make additional requests to ensure we get everything
           setTimeout(() => {
             console.log("Follow-up canvas data request")
             requestAllCanvasData()
           }, 5000)
+
+          setTimeout(() => {
+            console.log("Final canvas data request")
+            requestAllCanvasData()
+          }, 10000)
         }, 2000)
       }
 
@@ -1083,39 +1087,52 @@ export default function Gallery({ username }: GalleryProps) {
           console.error("Error requesting peer list:", err)
         }
 
-        // Send canvas data - improved to ensure all drawings are shared
+        // Send canvas data with improved reliability
         console.log("Sending all canvas data to new peer")
-        canvases.forEach((canvas) => {
-          const canvasId = canvas.userData.id
-          const savedDataString = localStorage.getItem(`canvas-${canvasId}`)
 
-          if (savedDataString) {
-            try {
-              const savedData = JSON.parse(savedDataString)
-              // Only send if the data isn't too old
-              const currentTime = Date.now()
-              if (savedData.timestamp && currentTime - savedData.timestamp < 1800000) {
-                console.log(`Sending canvas data for ${canvasId} to new peer`)
-                setTimeout(() => {
-                  // Add a small delay to ensure connection is ready
+        // Add a small delay to ensure connection is ready
+        setTimeout(() => {
+          canvases.forEach((canvas) => {
+            const canvasId = canvas.userData.id
+            const savedDataString = localStorage.getItem(`canvas-${canvasId}`)
+
+            if (savedDataString) {
+              try {
+                const savedData = JSON.parse(savedDataString)
+                // Only send if the data isn't too old
+                const currentTime = Date.now()
+                if (savedData.timestamp && currentTime - savedData.timestamp < 1800000) {
+                  console.log(`Sending canvas data for ${canvasId} to new peer`)
                   try {
                     conn.send({
                       type: "canvasData",
                       data: {
                         canvasId,
-                        imageData: savedData.imageData,
+                        imageData: JSON.stringify(savedData),
                       },
                     })
                   } catch (e) {
-                    console.error(`Error sending delayed canvas data for ${canvasId}:`, e)
+                    console.error(`Error sending canvas data for ${canvasId}:`, e)
                   }
-                }, 500)
+                }
+              } catch (err) {
+                console.error(`Error processing canvas data for ${canvasId}:`, err)
               }
-            } catch (err) {
-              console.error(`Error sending canvas data for ${canvasId}:`, err)
             }
+          })
+
+          // Request canvas data from the peer as well (in case they have newer drawings)
+          try {
+            conn.send({
+              type: "requestAllCanvasData",
+              data: {
+                requesterId: myId,
+              },
+            })
+          } catch (err) {
+            console.error("Error requesting canvas data:", err)
           }
-        })
+        }, 1000)
       })
 
       // Handle data messages
@@ -1290,55 +1307,6 @@ export default function Gallery({ username }: GalleryProps) {
       }, 5000)
     }
 
-    function handlePlayerInfo(data: any) {
-      if (!data || !data.id) {
-        console.error("Invalid player data:", data)
-        return
-      }
-
-      console.log("Received player info:", data)
-
-      // Add to known peers
-      knownPeersRef.current.add(data.id)
-
-      // Create player position vector with fixed height
-      const playerPosition = new THREE.Vector3(data.position.x, 1.0, data.position.z)
-
-      // Create or update player model
-      createPlayerModel(data.id, data.username, data.color, playerPosition)
-    }
-
-    function handlePlayerMove(playerId: string, moveData: any) {
-      if (!playerId || !moveData) return
-
-      // Update player position in state with fixed height
-      setPlayers((prev) => {
-        if (!prev[playerId]) return prev
-
-        const updatedPlayer = {
-          ...prev[playerId],
-          position: new THREE.Vector3(moveData.position.x, 1.0, moveData.position.z), // Force consistent height
-          rotation: moveData.rotation,
-        }
-
-        return {
-          ...prev,
-          [playerId]: updatedPlayer,
-        }
-      })
-
-      // Update player model directly for better performance
-      if (playerModelsRef.current[playerId]) {
-        const { model, nameSprite } = playerModelsRef.current[playerId]
-
-        model.position.set(moveData.position.x, 1.0, moveData.position.z) // Force consistent height
-
-        model.rotation.y = moveData.rotation
-
-        nameSprite.position.set(moveData.position.x, 1.0 + 2.5, moveData.position.z) // Adjust name tag height based on fixed player height
-      }
-    }
-
     function handleCanvasData(data: any) {
       if (!data || !data.canvasId) {
         console.error("Invalid canvas data received:", data)
@@ -1389,18 +1357,26 @@ export default function Gallery({ username }: GalleryProps) {
           console.log(`Updated canvas ${canvasId} with received data`)
         }
 
+        img.onerror = (err) => {
+          console.error(`Error loading image for canvas ${canvasId}:`, err)
+        }
+
         // Handle both direct image data and JSON strings
-        if (typeof imageData === "string") {
-          try {
-            // Try to parse as JSON first
-            const parsed = JSON.parse(imageData)
-            img.src = parsed.imageData || imageData
-          } catch (e) {
-            // If not JSON, use directly
-            img.src = imageData
+        try {
+          if (typeof imageData === "string") {
+            try {
+              // Try to parse as JSON first
+              const parsed = JSON.parse(imageData)
+              img.src = parsed.imageData || imageData
+            } catch (e) {
+              // If not JSON, use directly
+              img.src = imageData
+            }
+          } else if (imageData && imageData.imageData) {
+            img.src = imageData.imageData
           }
-        } else if (imageData && imageData.imageData) {
-          img.src = imageData.imageData
+        } catch (err) {
+          console.error(`Error processing image data for canvas ${canvasId}:`, err)
         }
       }
     }
@@ -1415,7 +1391,7 @@ export default function Gallery({ username }: GalleryProps) {
         if (conn.open) {
           try {
             conn.send({
-              type: "canvasData",
+              type: "canvasData", // Use canvasData type for consistency
               data: {
                 canvasId: data.canvasId,
                 imageData: data.imageData,
@@ -1502,7 +1478,7 @@ export default function Gallery({ username }: GalleryProps) {
                 type: "updateCanvas",
                 data: {
                   canvasId,
-                  imageData,
+                  imageData: JSON.stringify(canvasData),
                 },
               })
             } catch (err) {
@@ -1512,40 +1488,203 @@ export default function Gallery({ username }: GalleryProps) {
         })
       }
 
-      // Reset state
+      // Reset drawing mode
       setDrawingMode(false)
       setCurrentCanvas(null)
+      controlsRef.current?.lock()
+    }
 
-      // Re-lock controls
-      setTimeout(() => {
-        controls.lock()
-      }, 100)
+    // Function to handle player info
+    const handlePlayerInfo = (data: any) => {
+      const { id, username, position, rotation, color } = data
+
+      // Skip if this is our own ID to prevent duplicate player models
+      if (id === myId) {
+        console.log("Received my own player info, ignoring to prevent duplication")
+        return
+      }
+
+      // Check if the player already exists
+      if (playerModelsRef.current[id]) {
+        console.log(`Player ${id} already exists, updating info`)
+        // Update existing player model
+        const { model, nameSprite } = playerModelsRef.current[id]
+        model.position.copy(new THREE.Vector3(position.x, position.y, position.z))
+        model.rotation.y = rotation
+        nameSprite.position.set(position.x, position.y + 2.5, position.z)
+
+        // Update players state
+        setPlayers((prev) => ({
+          ...prev,
+          [id]: {
+            id,
+            username,
+            position: new THREE.Vector3(position.x, position.y, position.z),
+            rotation,
+            color,
+            model,
+            nameSprite,
+          },
+        }))
+      } else {
+        // Create a new player model
+        console.log(`Creating new player model for ${id}`)
+        const { model, nameSprite } = createPlayerModel(
+          id,
+          username,
+          color,
+          new THREE.Vector3(position.x, position.y, position.z),
+        )
+
+        // Update players state
+        setPlayers((prev) => ({
+          ...prev,
+          [id]: {
+            id,
+            username,
+            position: new THREE.Vector3(position.x, position.y, position.z),
+            rotation,
+            color,
+            model,
+            nameSprite,
+          },
+        }))
+      }
+    }
+
+    // Function to handle player movement
+    const handlePlayerMove = (peerId: string, data: any) => {
+      if (!peerId) return
+
+      // Find the player model
+      const playerModel = playerModelsRef.current[peerId]?.model
+      const nameSprite = playerModelsRef.current[peerId]?.nameSprite
+
+      if (playerModel) {
+        // Update position and rotation
+        playerModel.position.set(data.position.x, data.position.y, data.position.z)
+        playerModel.rotation.y = data.rotation
+
+        // Update name sprite position
+        if (nameSprite) {
+          nameSprite.position.set(data.position.x, data.position.y + 2.5, data.position.z)
+        }
+
+        // Update players state
+        setPlayers((prev) => ({
+          ...prev,
+          [peerId]: {
+            ...prev[peerId],
+            position: new THREE.Vector3(data.position.x, data.position.y, data.position.z),
+            rotation: data.rotation,
+          },
+        }))
+      }
     }
 
     // Start animation loop
     animate()
 
-    // Cleanup
     return () => {
+      console.log("Cleaning up gallery component")
+
+      // Remove event listeners
       document.removeEventListener("keydown", onKeyDown)
       document.removeEventListener("keyup", onKeyUp)
       window.removeEventListener("resize", onWindowResize)
 
-      if (containerRef.current && renderer.domElement) {
-        containerRef.current.removeChild(renderer.domElement)
+      // Dispose of renderer
+      if (renderer) {
+        renderer.dispose()
       }
 
+      // Remove canvas element
+      if (containerRef.current && containerRef.current.firstChild) {
+        containerRef.current.removeChild(containerRef.current.firstChild)
+      }
+
+      // Clean up peer connections
       if (peerRef.current) {
+        Object.values(connectionsRef.current).forEach((conn) => {
+          try {
+            conn.close()
+          } catch (e) {
+            console.error("Error closing connection:", e)
+          }
+        })
+
         peerRef.current.destroy()
       }
 
+      // Clear any timeouts
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current)
       }
-
-      renderer.dispose()
     }
   }, [username])
+
+  // Improved function to handle canvas drawing interface
+  const handleDrawingComplete = (imageData: string) => {
+    if (!currentCanvas) return
+
+    const canvasId = currentCanvas.userData.id
+    console.log(`Drawing completed for canvas ${canvasId}`)
+
+    // Save to localStorage with timestamp
+    const canvasData = {
+      imageData,
+      timestamp: Date.now(),
+    }
+    localStorage.setItem(`canvas-${canvasId}`, JSON.stringify(canvasData))
+
+    // Update the canvas texture
+    const offScreenCanvas = currentCanvas.userData.offScreenCanvas
+    const offCtx = offScreenCanvas.getContext("2d")
+
+    if (offCtx) {
+      const img = new Image()
+      img.crossOrigin = "anonymous"
+      img.onload = () => {
+        // Clear the canvas first
+        offCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
+        offCtx.fillStyle = "white"
+        offCtx.fillRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
+
+        // Draw the image
+        offCtx.drawImage(img, 0, 0, offScreenCanvas.width, offScreenCanvas.height)
+
+        // Update the texture
+        const texture = (currentCanvas.material as THREE.MeshBasicMaterial).map
+        if (texture) {
+          texture.needsUpdate = true
+        }
+
+        // Broadcast to all peers
+        console.log(`Broadcasting canvas update for ${canvasId} to all peers from handleDrawingComplete`)
+        Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
+          if (conn.open) {
+            try {
+              conn.send({
+                type: "updateCanvas",
+                data: {
+                  canvasId,
+                  imageData: JSON.stringify(canvasData),
+                },
+              })
+            } catch (err) {
+              console.error(`Error sending canvas update to ${peerId}:`, err)
+            }
+          }
+        })
+      }
+      img.src = imageData
+    }
+
+    // Reset drawing mode
+    setDrawingMode(false)
+    setCurrentCanvas(null)
+    controlsRef.current?.lock()
+  }
 
   // Function to handle saving drawing from the new drawing interface
   const handleSaveDrawing = (imageData: string) => {
