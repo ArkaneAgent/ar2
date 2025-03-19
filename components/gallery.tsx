@@ -31,6 +31,7 @@ declare global {
     exitDrawingMode: (canvas: HTMLCanvasElement) => void
     debugPlayers: () => void
     forceReconnect: () => void
+    currentInteractiveCanvas: THREE.Mesh | null
   }
 }
 
@@ -127,14 +128,23 @@ export default function Gallery({ username }: GalleryProps) {
           }
           break
         case "KeyE":
+          // Check if we're looking at a canvas
           if (nearbyCanvas && !drawingMode && controls.isLocked) {
             console.log("Entering drawing mode for canvas:", nearbyCanvas.userData?.id)
             enterDrawingMode(nearbyCanvas)
+          } else if ((window as any).currentInteractiveCanvas && !drawingMode && controls.isLocked) {
+            // Use the stored canvas reference if available
+            console.log(
+              "Entering drawing mode for canvas via global reference:",
+              (window as any).currentInteractiveCanvas.userData?.id,
+            )
+            enterDrawingMode((window as any).currentInteractiveCanvas)
           } else if (!drawingMode && controls.isLocked) {
             console.log("Pressed E but no canvas nearby or not eligible:", {
               nearbyCanvas: !!nearbyCanvas,
               drawingMode,
               isLocked: controls.isLocked,
+              globalCanvas: !!(window as any).currentInteractiveCanvas,
             })
           }
           break
@@ -673,12 +683,12 @@ export default function Gallery({ username }: GalleryProps) {
           ctx.stroke()
         }
 
-        // Add a prompt text
+        // Add a prompt text with updated instructions
         ctx.fillStyle = "#888888"
         ctx.font = "30px Arial"
         ctx.textAlign = "center"
         ctx.textBaseline = "middle"
-        ctx.fillText("Press E to draw", 1024 / 2, 768 / 2)
+        ctx.fillText("Press E or click to draw", 1024 / 2, 768 / 2)
       }
 
       // Frame
@@ -777,23 +787,25 @@ export default function Gallery({ username }: GalleryProps) {
       if (intersects.length > 0 && intersects[0].distance < 3) {
         const canvasObject = intersects[0].object as THREE.Mesh
         setNearbyCanvas(canvasObject)
-        setInteractionPrompt("Press E to draw on canvas")
+        setInteractionPrompt("Press E or click to draw on canvas")
 
         // Add mouse click support for canvas interaction
-        document.addEventListener(
-          "click",
-          function handleClick() {
-            if (controls.isLocked && !drawingMode) {
-              console.log("Mouse clicked on canvas:", canvasObject.userData?.id)
-              enterDrawingMode(canvasObject)
-            }
-            document.removeEventListener("click", handleClick)
-          },
-          { once: true },
-        )
+        const handleClick = () => {
+          if (controls.isLocked && !drawingMode) {
+            console.log("Mouse clicked on canvas:", canvasObject.userData?.id)
+            enterDrawingMode(canvasObject)
+          }
+        }
+
+        // Add the event listener once
+        document.addEventListener("click", handleClick, { once: true })
+
+        // Store the current canvas for E key interaction
+        window.currentInteractiveCanvas = canvasObject
       } else {
         setNearbyCanvas(null)
         setInteractionPrompt("")
+        window.currentInteractiveCanvas = null
       }
     }
 
