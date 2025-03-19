@@ -68,7 +68,7 @@ export default function Gallery({ username }: GalleryProps) {
 
     // Camera
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
-    const startPosition = new THREE.Vector3(0, 1.6, 5)
+    const startPosition = new THREE.Vector3(0, 1.0, 5) // Consistent starting height
     camera.position.copy(startPosition)
 
     // Renderer
@@ -921,14 +921,14 @@ export default function Gallery({ username }: GalleryProps) {
       }
 
       // Create new player model with fixed height to ensure consistent positioning
-      const fixedPosition = new THREE.Vector3(position.x, 1.6, position.z)
+      const fixedPosition = new THREE.Vector3(position.x, 1.0, position.z) // Set a consistent height of 1.0
       const playerModel = new PlayerModel(color, fixedPosition)
 
       const nameSprite = new TextSprite(
         playerName,
         new THREE.Vector3(
           fixedPosition.x,
-          fixedPosition.y + 2.9, // Position above player
+          fixedPosition.y + 2.5, // Consistent height above player
           fixedPosition.z,
         ),
       )
@@ -1209,7 +1209,7 @@ export default function Gallery({ username }: GalleryProps) {
       knownPeersRef.current.add(playerData.id)
 
       // Create player position vector with fixed height
-      const playerPosition = new THREE.Vector3(playerData.position.x, 1.6, playerData.position.z)
+      const playerPosition = new THREE.Vector3(playerData.position.x, 1.0, playerData.position.z)
 
       // Create or update player model
       createPlayerModel(playerData.id, playerData.username, playerData.color, playerPosition)
@@ -1224,7 +1224,7 @@ export default function Gallery({ username }: GalleryProps) {
 
         const updatedPlayer = {
           ...prev[playerId],
-          position: new THREE.Vector3(moveData.position.x, 1.6, moveData.position.z), // Force consistent height
+          position: new THREE.Vector3(moveData.position.x, 1.0, moveData.position.z), // Force consistent height
           rotation: moveData.rotation,
         }
 
@@ -1238,11 +1238,11 @@ export default function Gallery({ username }: GalleryProps) {
       if (playerModelsRef.current[playerId]) {
         const { model, nameSprite } = playerModelsRef.current[playerId]
 
-        model.position.set(moveData.position.x, 1.6, moveData.position.z) // Force consistent height
+        model.position.set(moveData.position.x, 1.0, moveData.position.z) // Force consistent height
 
         model.rotation.y = moveData.rotation
 
-        nameSprite.position.set(moveData.position.x, 1.6 + 2.9, moveData.position.z) // Adjust name tag height based on fixed player height
+        nameSprite.position.set(moveData.position.x, 1.0 + 2.5, moveData.position.z) // Adjust name tag height based on fixed player height
       }
     }
 
