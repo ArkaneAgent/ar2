@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import * as THREE from "three"
 import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls"
 import { PillStatue } from "@/components/pill-statue"
@@ -57,6 +57,16 @@ export default function Gallery({ username }: GalleryProps) {
   const [debugInfo, setDebugInfo] = useState("")
   const controlsRef = useRef<PointerLockControls | null>(null)
   const canvasesRef = useRef<THREE.Mesh[]>([])
+  const [showWelcome, setShowWelcome] = useState(true)
+
+  useEffect(() => {
+    if (showWelcome) {
+      const timer = setTimeout(() => {
+        setShowWelcome(false)
+      }, 5000) // Hide after 5 seconds
+      return () => clearTimeout(timer)
+    }
+  }, [showWelcome])
 
   // Scene setup
   useEffect(() => {
@@ -1572,12 +1582,9 @@ export default function Gallery({ username }: GalleryProps) {
 
         // Update players state
         setPlayers((prev) => ({
-          ...prev,
-          [peerId]: {
-            ...prev[peerId],
-            position: new THREE.Vector3(data.position.x, data.position.y, data.position.z),
-            rotation: data.rotation,
-          },
+          ...prev[peerId],
+          position: new THREE.Vector3(data.position.x, data.position.y, data.position.z),
+          rotation: data.rotation,
         }))
       }
     }
@@ -1727,20 +1734,19 @@ export default function Gallery({ username }: GalleryProps) {
           if (conn.open) {
             try {
               conn.send({
-                type: "updateCanvas",
-                data: {
-                  canvasId,
-                  imageData,
-                },
-              })
-            } catch (err) {
-              console.error(`Error sending canvas update to ${peerId}:`, err)
-            }
+              type: "updateCanvas",
+              data: {
+                canvasId,
+                imageData,
+              },
+            })
+          } catch (err) {
+            console.error(`Error sending canvas update to ${peerId}:`, err)
           }
-        })
-      }
-      img.src = imageData
+        }
+      })
     }
+    img.src = imageData
   }
 
   // Function to handle closing the drawing interface
@@ -1758,6 +1764,14 @@ export default function Gallery({ username }: GalleryProps) {
 
   return (
     <div ref={containerRef} className="h-screen w-screen">
+      {showWelcome && (
+        <div className="fixed top-0 left-0 w-full h-full flex items-center justify-center pointer-events-none z-50">
+          <div className="bg-black bg-opacity-70 text-white px-8 py-6 rounded-lg text-center transform transition-all duration-500 ease-in-out">
+            <h1 className="text-3xl font-bold mb-2">Welcome to the "Brush" Art Gallery</h1>
+            <p className="text-lg">Explore, create, and share your art with others</p>
+          </div>
+        </div>
+      )}
       {!started && !drawingMode && <Instructions onClick={() => {}} />}
 
       {interactionPrompt && <InteractionPrompt text={interactionPrompt} />}
