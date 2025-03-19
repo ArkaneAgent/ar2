@@ -47,6 +47,23 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
         console.error("Error loading saved canvas:", e)
       }
     }
+
+    // Ensure cursor is visible by setting it explicitly
+    document.body.style.cursor = "auto"
+    canvas.style.cursor = "crosshair"
+
+    // Prevent the browser from showing cursor visibility prompts
+    document.exitPointerLock =
+      document.exitPointerLock || (document as any).mozExitPointerLock || (document as any).webkitExitPointerLock
+
+    if (document.pointerLockElement) {
+      document.exitPointerLock()
+    }
+
+    return () => {
+      // Reset cursor when component unmounts
+      document.body.style.cursor = "auto"
+    }
   }, [canvasId])
 
   // Set up event listeners
@@ -149,7 +166,8 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
           ref={canvasRef}
           width={800}
           height={600}
-          className="cursor-crosshair border-2 border-gray-300 bg-white shadow-lg"
+          className="border-2 border-gray-300 bg-white shadow-lg"
+          style={{ cursor: "crosshair" }} // Explicitly set cursor style
         />
 
         <div className="mt-4 flex w-full flex-wrap items-center justify-center gap-4 rounded-md bg-gray-100 p-4">
@@ -210,7 +228,6 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
         </div>
 
         <p className="mt-4 text-sm text-gray-500">Press ESC to save and exit</p>
-        {/* Add this right before the final closing div */}
         <div className="mt-4 max-w-md text-center text-xs text-gray-500">
           <p className="font-medium">About Drawing Persistence:</p>
           <p>Drawings are saved in your browser's storage and shared with other players in your current session.</p>
