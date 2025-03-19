@@ -575,34 +575,68 @@ export default function Gallery({ username }: GalleryProps) {
       // Room dimensions
       const roomSize = 30
       const halfSize = roomSize / 2
+      const wallHeight = 14
 
       // Canvas settings
-      const canvasSpacing = 4
-      const canvasHeight = 2
+      const canvasWidth = 2
+      const canvasHeight = 1.5
+      const canvasSpacing = 5
       const canvasesPerWall = 4
+      const canvasVerticalPosition = 2 // Height from floor
 
       // Calculate positions
       const wallLength = roomSize - 2
-      const totalSpace = canvasesPerWall * canvasSpacing
-      const startOffset = (wallLength - totalSpace) / 2 + canvasSpacing / 2
+      const totalWidth = canvasesPerWall * (canvasWidth + canvasSpacing) - canvasSpacing
+      const startOffset = (wallLength - totalWidth) / 2 + canvasWidth / 2
 
       // Place canvases on all walls
       for (let i = 0; i < canvasesPerWall; i++) {
+        // Calculate position for this canvas
+        const position = startOffset + i * (canvasWidth + canvasSpacing)
+
         // North wall
-        const xNorth = -halfSize + startOffset + i * canvasSpacing
-        createCanvas(xNorth, canvasHeight, -halfSize + 0.2, 0, 0, 0, `north-${i}`)
+        createCanvas(
+          -halfSize + position, // x
+          canvasVerticalPosition, // y
+          -halfSize + 0.15, // z - slightly offset from wall
+          0,
+          0,
+          0, // rotation
+          `north-${i}`,
+        )
 
         // South wall
-        const xSouth = -halfSize + startOffset + i * canvasSpacing
-        createCanvas(xSouth, canvasHeight, halfSize - 0.2, Math.PI, 0, 0, `south-${i}`)
+        createCanvas(
+          -halfSize + position, // x
+          canvasVerticalPosition, // y
+          halfSize - 0.15, // z - slightly offset from wall
+          Math.PI,
+          0,
+          0, // rotation
+          `south-${i}`,
+        )
 
         // East wall
-        const zEast = -halfSize + startOffset + i * canvasSpacing
-        createCanvas(halfSize - 0.2, canvasHeight, zEast, -Math.PI / 2, 0, 0, `east-${i}`)
+        createCanvas(
+          halfSize - 0.15, // x - slightly offset from wall
+          canvasVerticalPosition, // y
+          -halfSize + position, // z
+          -Math.PI / 2,
+          0,
+          0, // rotation
+          `east-${i}`,
+        )
 
         // West wall
-        const zWest = -halfSize + startOffset + i * canvasSpacing
-        createCanvas(-halfSize + 0.2, canvasHeight, zWest, Math.PI / 2, 0, 0, `west-${i}`)
+        createCanvas(
+          -halfSize + 0.15, // x - slightly offset from wall
+          canvasVerticalPosition, // y
+          -halfSize + position, // z
+          Math.PI / 2,
+          0,
+          0, // rotation
+          `west-${i}`,
+        )
       }
     }
 
@@ -714,11 +748,14 @@ export default function Gallery({ username }: GalleryProps) {
       canvas.position.set(x, y, z)
       canvas.rotation.set(rotationX, rotationY, rotationZ)
 
-      // Adjust position slightly to avoid z-fighting
+      // Adjust position to avoid z-fighting - make this more precise
+      const offset = 0.03 // Reduced offset for better alignment
       if (Math.abs(rotationY) === Math.PI / 2) {
-        canvas.position.x += rotationY > 0 ? 0.06 : -0.06
+        // East/West walls
+        canvas.position.x += rotationY > 0 ? offset : -offset
       } else if (Math.abs(rotationY) === Math.PI || rotationY === 0) {
-        canvas.position.z += rotationY === 0 ? 0.06 : -0.06
+        // North/South walls
+        canvas.position.z += rotationY === 0 ? offset : -offset
       }
 
       // Store canvas and context for drawing
