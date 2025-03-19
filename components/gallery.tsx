@@ -6,9 +6,9 @@ import { PointerLockControls } from "three/examples/jsm/controls/PointerLockCont
 import { PillStatue } from "@/components/pill-statue"
 import { Instructions } from "@/components/instructions"
 import { InteractionPrompt } from "@/components/interaction-prompt"
-import { DrawingInterface } from "@/components/drawing-interface"
 import { PlayerModel } from "@/components/player-model"
 import { TextSprite } from "@/components/text-sprite"
+import { NewDrawingInterface } from "@/components/new-drawing-interface"
 import Peer from "peerjs"
 
 interface Player {
@@ -54,6 +54,7 @@ export default function Gallery({ username }: GalleryProps) {
   const playerModelsRef = useRef<Record<string, { model: PlayerModel; nameSprite: TextSprite }>>({})
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const [debugInfo, setDebugInfo] = useState("")
+  const controlsRef = useRef<PointerLockControls | null>(null)
 
   // Scene setup
   useEffect(() => {
@@ -79,6 +80,7 @@ export default function Gallery({ username }: GalleryProps) {
 
     // Controls
     const controls = new PointerLockControls(camera, document.body)
+    controlsRef.current = controls
 
     // Movement variables
     const velocity = new THREE.Vector3()
@@ -636,6 +638,13 @@ export default function Gallery({ username }: GalleryProps) {
           ctx.lineTo(1024, y)
           ctx.stroke()
         }
+
+        // Add a prompt text
+        ctx.fillStyle = "#888888"
+        ctx.font = "30px Arial"
+        ctx.textAlign = "center"
+        ctx.textBaseline = "middle"
+        ctx.fillText("Press E to draw", 1024 / 2, 768 / 2)
       }
 
       // Frame
@@ -732,6 +741,19 @@ export default function Gallery({ username }: GalleryProps) {
         const canvasObject = intersects[0].object as THREE.Mesh
         setNearbyCanvas(canvasObject)
         setInteractionPrompt("Press E to draw on canvas")
+
+        // Add mouse click support for canvas interaction
+        document.addEventListener(
+          "click",
+          function handleClick() {
+            if (controls.isLocked && !drawingMode) {
+              console.log("Mouse clicked on canvas:", canvasObject.userData?.id)
+              enterDrawingMode(canvasObject)
+            }
+            document.removeEventListener("click", handleClick)
+          },
+          { once: true },
+        )
       } else {
         setNearbyCanvas(null)
         setInteractionPrompt("")
@@ -849,15 +871,16 @@ export default function Gallery({ username }: GalleryProps) {
         scene.remove(playerModelsRef.current[id].nameSprite)
       }
 
-      // Create new player model
-      const playerModel = new PlayerModel(color, new THREE.Vector3(position.x, position.y, position.z))
+      // Create new player model with fixed height to ensure consistent positioning
+      const fixedPosition = new THREE.Vector3(position.x, 1.6, position.z)
+      const playerModel = new PlayerModel(color, fixedPosition)
 
       const nameSprite = new TextSprite(
         playerName,
         new THREE.Vector3(
-          position.x,
-          position.y + 2.2, // Position above player
-          position.z,
+          fixedPosition.x,
+          fixedPosition.y + 2.9, // Position above player
+          fixedPosition.z,
         ),
       )
 
@@ -876,7 +899,7 @@ export default function Gallery({ username }: GalleryProps) {
         [id]: {
           id,
           username: playerName,
-          position: new THREE.Vector3(position.x, position.y, position.z),
+          position: fixedPosition,
           rotation: 0,
           color,
           model: playerModel,
@@ -1023,6 +1046,11 @@ export default function Gallery({ username }: GalleryProps) {
           // Handle different message types
           switch (data.type) {
             case "playerInfo":
+              // Skip if this is our own ID to prevent duplicate player models
+              if (data.data.id === myId) {
+                console.log("Received my own player info, ignoring to prevent duplication")
+                return
+              }
               handlePlayerInfo(data.data)
               break
 
@@ -1131,8 +1159,8 @@ export default function Gallery({ username }: GalleryProps) {
       // Add to known peers
       knownPeersRef.current.add(playerData.id)
 
-      // Create player position vector
-      const playerPosition = new THREE.Vector3(playerData.position.x, playerData.position.y, playerData.position.z)
+      // Create player position vector with fixed height
+      const playerPosition = new THREE.Vector3(playerData.position.x, 1.6, playerData.position.z)
 
       // Create or update player model
       createPlayerModel(playerData.id, playerData.username, playerData.color, playerPosition)
@@ -1141,13 +1169,13 @@ export default function Gallery({ username }: GalleryProps) {
     function handlePlayerMove(playerId: string, moveData: any) {
       if (!playerId || !moveData) return
 
-      // Update player position in state
+      // Update player position in state with fixed height
       setPlayers((prev) => {
         if (!prev[playerId]) return prev
 
         const updatedPlayer = {
           ...prev[playerId],
-          position: new THREE.Vector3(moveData.position.x, moveData.position.y, moveData.position.z),
+          position: new THREE.Vector3(moveData.position.x, 1.6, moveData.position.z), // Force consistent height
           rotation: moveData.rotation,
         }
 
@@ -1161,11 +1189,11 @@ export default function Gallery({ username }: GalleryProps) {
       if (playerModelsRef.current[playerId]) {
         const { model, nameSprite } = playerModelsRef.current[playerId]
 
-        model.position.set(moveData.position.x, moveData.position.y, moveData.position.z)
+        model.position.set(moveData.position.x, 1.6, moveData.position.z) // Force consistent height
 
         model.rotation.y = moveData.rotation
 
-        nameSprite.position.set(moveData.position.x, moveData.position.y + 2.2, moveData.position.z)
+        nameSprite.position.set(moveData.position.x, 1.6 + 2.9, moveData.position.z) // Adjust name tag height based on fixed player height
       }
     }
 
@@ -1350,13 +1378,83 @@ export default function Gallery({ username }: GalleryProps) {
     }
   }, [username])
 
+  // Function to handle saving drawing from the new drawing interface
+  const handleSaveDrawing = (imageData: string) => {
+    if (!currentCanvas) return
+
+    // Get the canvas data
+    const canvasId = currentCanvas.userData.id
+    const offScreenCanvas = currentCanvas.userData.offScreenCanvas
+    const offCtx = offScreenCanvas.getContext("2d")
+
+    if (offCtx) {
+      // Load the image data into the texture
+      const img = new Image()
+      img.crossOrigin = "anonymous"
+      img.onload = () => {
+        offCtx.drawImage(img, 0, 0, offScreenCanvas.width, offScreenCanvas.height)
+
+        // Update the texture
+        const texture = (currentCanvas.material as THREE.MeshBasicMaterial).map
+        if (texture) {
+          texture.needsUpdate = true
+        }
+
+        // Save to localStorage with timestamp
+        const canvasData = {
+          imageData,
+          timestamp: Date.now(),
+        }
+        localStorage.setItem(`canvas-${canvasId}`, JSON.stringify(canvasData))
+
+        // Broadcast to other peers
+        Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
+          if (conn.open) {
+            try {
+              conn.send({
+                type: "updateCanvas",
+                data: {
+                  canvasId,
+                  imageData,
+                },
+              })
+            } catch (err) {
+              console.error(`Error sending canvas update to ${peerId}:`, err)
+            }
+          }
+        })
+      }
+      img.src = imageData
+    }
+  }
+
+  // Function to handle closing the drawing interface
+  const handleCloseDrawing = () => {
+    setDrawingMode(false)
+    setCurrentCanvas(null)
+
+    // Re-lock controls
+    if (controlsRef.current) {
+      setTimeout(() => {
+        controlsRef.current?.lock()
+      }, 100)
+    }
+  }
+
   return (
     <div ref={containerRef} className="h-screen w-screen">
       {!started && !drawingMode && <Instructions onClick={() => {}} />}
 
       {interactionPrompt && <InteractionPrompt text={interactionPrompt} />}
 
-      {drawingMode && currentCanvas && <DrawingInterface />}
+      {/* Use our new drawing interface instead of the old one */}
+      {drawingMode && currentCanvas && (
+        <NewDrawingInterface
+          canvasId={currentCanvas.userData.id}
+          onSave={handleSaveDrawing}
+          onClose={handleCloseDrawing}
+        />
+      )}
 
       {myId && (
         <div className="absolute bottom-4 left-4 z-10 rounded bg-black/70 p-2 text-white">
