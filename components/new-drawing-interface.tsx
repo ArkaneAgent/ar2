@@ -16,6 +16,23 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
   const lastPosRef = useRef<{ x: number; y: number } | null>(null)
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
 
+  // Ensure cursor is visible
+  useEffect(() => {
+    // Ensure cursor is visible
+    const originalCursor = document.body.style.cursor
+    document.body.style.cursor = "auto"
+
+    // Force exit pointer lock if it's active
+    if (document.pointerLockElement) {
+      document.exitPointerLock()
+    }
+
+    return () => {
+      // Restore original cursor when component unmounts
+      document.body.style.cursor = originalCursor
+    }
+  }, [])
+
   // Initialize canvas once on mount
   useEffect(() => {
     const canvas = canvasRef.current
@@ -176,6 +193,9 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+      <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded text-sm">
+        Click and drag to draw. Your cursor should be visible.
+      </div>
       <div className="flex flex-col items-center rounded-lg bg-white p-6 shadow-xl">
         <h2 className="mb-4 text-2xl font-bold">Drawing Canvas: {canvasId}</h2>
 
@@ -184,7 +204,10 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
           width={800}
           height={600}
           className="border-2 border-gray-300 bg-white shadow-lg"
-          style={{ cursor: "crosshair" }} // Explicitly set cursor style
+          style={{
+            cursor: "crosshair",
+            touchAction: "none", // Prevent touch events from being captured by the browser
+          }}
         />
 
         <div className="mt-4 flex w-full flex-wrap items-center justify-center gap-4 rounded-md bg-gray-100 p-4">
