@@ -140,7 +140,7 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
         // Add a small delay before closing to ensure data is processed
         setTimeout(() => {
           onClose()
-        }, 100)
+        }, 300) // Increased delay for better reliability
       } catch (err) {
         console.error("Error saving canvas:", err)
         alert("There was an error saving your drawing. Please try again.")
