@@ -675,8 +675,8 @@ export default function Gallery({ username }: GalleryProps) {
           ctx.lineTo(x, 768)
           ctx.stroke()
         }
-        \
-        for (let y = 0; y <= 768, y += 50) {
+
+        for (let y = 0; y <= 768; y += 50) {
           ctx.beginPath()
           ctx.moveTo(0, y)
           ctx.lineTo(1024, y)
@@ -960,10 +960,6 @@ export default function Gallery({ username }: GalleryProps) {
     }
 
     function joinGallery(peerId: string) {
-      // Check if there's a peer ID in the URL to connect to
-      const urlParams = new URLSearchParams(window.location.search)
-      const connectToPeer = urlParams.get("p") || urlParams.get("peer") // Support both formats
-
       // Check if there's a peer ID in the URL to connect to
       const urlParams = new URLSearchParams(window.location.search)
       const connectToPeer = urlParams.get("p") || urlParams.get("peer") // Support both formats
