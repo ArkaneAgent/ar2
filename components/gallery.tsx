@@ -4,11 +4,8 @@ import { useEffect, useRef, useState } from "react"
 import * as THREE from "three"
 import { PointerLockControls } from "three/examples/jsm/controls/PointerLockControls"
 import { PillStatue } from "@/components/pill-statue"
-import { Instructions } from "@/components/instructions"
-import { InteractionPrompt } from "@/components/interaction-prompt"
 import { PlayerModel } from "@/components/player-model"
 import { TextSprite } from "@/components/text-sprite"
-import { NewDrawingInterface } from "@/components/new-drawing-interface"
 import Peer from "peerjs"
 
 interface Player {
@@ -971,10 +968,18 @@ export default function Gallery({ username }: GalleryProps) {
             connectToPeerById(targetPeerId)
           }
         })
-
-        // Request all canvas data after a short delay to ensure connections are established
+        
+        // Request all canvas data after a delay to ensure connections are established
+        // Use a longer delay to ensure connections are fully established
         setTimeout(() => {
+          console.log("Initial canvas data request after joining")
           requestAllCanvasData()
+          
+          // Make a second request after another delay to ensure we get everything
+          setTimeout(() => {
+            console.log("Follow-up canvas data request")
+            requestAllCanvasData()
+          }, 5000)
         }, 2000)
       }
 
@@ -1086,13 +1091,19 @@ export default function Gallery({ username }: GalleryProps) {
               const currentTime = Date.now()
               if (savedData.timestamp && currentTime - savedData.timestamp < 1800000) {
                 console.log(`Sending canvas data for ${canvasId} to new peer`)
-                conn.send({
-                  type: "canvasData",
-                  data: {
-                    canvasId,
-                    imageData: savedData.imageData,
-                  },
-                })
+                setTimeout(() => { // Add a small delay to ensure connection is ready
+                  try {
+                    conn.send({
+                      type: "canvasData",
+                      data: {
+                        canvasId,
+                        imageData: savedData.imageData,
+                      },
+                    })
+                  } catch (e) {
+                    console.error(`Error sending delayed canvas data for ${canvasId}:`, e)
+                  }
+                }, 500)
               }
             } catch (err) {
               console.error(`Error sending canvas data for ${canvasId}:`, err)
@@ -1239,67 +1250,38 @@ export default function Gallery({ username }: GalleryProps) {
 
     function requestAllCanvasData() {
       console.log("Requesting all canvas data from peers")
+      
+      // Add a flag to localStorage to track that we've requested data
+      localStorage.setItem('canvas-data-requested', 'true')
+      
+      // Request from all connected peers
       Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
         if (conn.open) {
           try {
+            console.log(`Requesting canvas data from peer: ${peerId}`)
             conn.send({
               type: "requestAllCanvasData",
-              data: {},
+              data: {
+                requesterId: myId
+              },
             })
           } catch (err) {
             console.error(`Error requesting canvas data from ${peerId}:`, err)
           }
         }
       })
-    }
-
-    function handlePlayerInfo(playerData: any) {
-      if (!playerData || !playerData.id) {
-        console.error("Invalid player data:", playerData)
-        return
-      }
-
-      console.log("Received player info:", playerData)
-
-      // Add to known peers
-      knownPeersRef.current.add(playerData.id)
-
-      // Create player position vector with fixed height
-      const playerPosition = new THREE.Vector3(playerData.position.x, 1.0, playerData.position.z)
-
-      // Create or update player model
-      createPlayerModel(playerData.id, playerData.username, playerData.color, playerPosition)
-    }
-
-    function handlePlayerMove(playerId: string, moveData: any) {
-      if (!playerId || !moveData) return
-
-      // Update player position in state with fixed height
-      setPlayers((prev) => {
-        if (!prev[playerId]) return prev
-
-        const updatedPlayer = {
-          ...prev[playerId],
-          position: new THREE.Vector3(moveData.position.x, 1.0, moveData.position.z), // Force consistent height
-          rotation: moveData.rotation,
+      
+      // Set a timeout to check if we received any data
+      setTimeout(() => {
+        if (localStorage.getItem('canvas-data-requested') === 'true') {
+          console.log("Canvas data request timeout - trying again")
+          localStorage.removeItem('canvas-data-requested')
+          // Try again if we have connections
+          if (Object.keys(connectionsRef.current).length > 0) {
+            requestAllCanvasData()
+          }
         }
-
-        return {
-          ...prev,
-          [playerId]: updatedPlayer,
-        }
-      })
-
-      // Update player model directly for better performance
-      if (playerModelsRef.current[playerId]) {
-        const { model, nameSprite } = playerModelsRef.current[playerId]
-
-        model.position.set(moveData.position.x, 1.0, moveData.position.z) // Force consistent height
-
-        model.rotation.y = moveData.rotation
-
-        nameSprite.position.set(moveData.position.x, 1.0 + 2.5, moveData.position.z) // Adjust name tag height based on fixed player height
-      }
+      }, 5000)
     }
 
     function handleCanvasData(data: any) {
@@ -1310,6 +1292,9 @@ export default function Gallery({ username }: GalleryProps) {
 
       const { canvasId, imageData } = data
       console.log(`Received canvas data for ${canvasId}`)
+
+      // Mark that we've received data
+      localStorage.removeItem('canvas-data-requested')
 
       // Find the canvas
       const canvas = canvases.find((c) => c.userData.id === canvasId)
@@ -1330,7 +1315,7 @@ export default function Gallery({ username }: GalleryProps) {
           offCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
           offCtx.fillStyle = "white"
           offCtx.fillRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
-
+          
           // Draw the received image
           offCtx.drawImage(img, 0, 0)
 
@@ -1459,145 +1444,4 @@ export default function Gallery({ username }: GalleryProps) {
           if (conn.open) {
             try {
               conn.send({
-                type: "updateCanvas",
-                data: {
-                  canvasId,
-                  imageData,
-                },
-              })
-            } catch (err) {
-              console.error(`Error sending canvas update to ${peerId}:`, err)
-            }
-          }
-        })
-      }
-
-      // Reset state
-      setDrawingMode(false)
-      setCurrentCanvas(null)
-
-      // Re-lock controls
-      setTimeout(() => {
-        controls.lock()
-      }, 100)
-    }
-
-    // Start animation loop
-    animate()
-
-    // Cleanup
-    return () => {
-      document.removeEventListener("keydown", onKeyDown)
-      document.removeEventListener("keyup", onKeyUp)
-      window.removeEventListener("resize", onWindowResize)
-
-      if (containerRef.current && renderer.domElement) {
-        containerRef.current.removeChild(renderer.domElement)
-      }
-
-      if (peerRef.current) {
-        peerRef.current.destroy()
-      }
-
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current)
-      }
-
-      renderer.dispose()
-    }
-  }, [username])
-
-  // Function to handle saving drawing from the new drawing interface
-  const handleSaveDrawing = (imageData: string) => {
-    if (!currentCanvas) return
-
-    // Get the canvas data
-    const canvasId = currentCanvas.userData.id
-    const offScreenCanvas = currentCanvas.userData.offScreenCanvas
-    const offCtx = offScreenCanvas.getContext("2d")
-
-    if (offCtx) {
-      // Load the image data into the texture
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.onload = () => {
-        offCtx.drawImage(img, 0, 0, offScreenCanvas.width, offScreenCanvas.height)
-
-        // Update the texture
-        const texture = (currentCanvas.material as THREE.MeshBasicMaterial).map
-        if (texture) {
-          texture.needsUpdate = true
-        }
-
-        // Save to localStorage with timestamp
-        const canvasData = {
-          imageData,
-          timestamp: Date.now(),
-        }
-        localStorage.setItem(`canvas-${canvasId}`, JSON.stringify(canvasData))
-
-        // Broadcast to all peers
-        console.log(`Broadcasting canvas update for ${canvasId} to all peers`)
-        Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
-          if (conn.open) {
-            try {
-              conn.send({
-                type: "updateCanvas",
-                data: {
-                  canvasId,
-                  imageData,
-                },
-              })
-            } catch (err) {
-              console.error(`Error sending canvas update to ${peerId}:`, err)
-            }
-          }
-        })
-      }
-      img.src = imageData
-    }
-  }
-
-  // Function to handle closing the drawing interface
-  const handleCloseDrawing = () => {
-    setDrawingMode(false)
-    setCurrentCanvas(null)
-
-    // Re-lock controls
-    if (controlsRef.current) {
-      setTimeout(() => {
-        controlsRef.current?.lock()
-      }, 100)
-    }
-  }
-
-  return (
-    <div ref={containerRef} className="h-screen w-screen">
-      {!started && !drawingMode && <Instructions onClick={() => {}} />}
-
-      {interactionPrompt && <InteractionPrompt text={interactionPrompt} />}
-
-      {/* Use our new drawing interface instead of the old one */}
-      {drawingMode && currentCanvas && (
-        <NewDrawingInterface
-          canvasId={currentCanvas.userData.id}
-          onSave={handleSaveDrawing}
-          onClose={handleCloseDrawing}
-        />
-      )}
-
-      {myId && (
-        <div className="absolute bottom-4 left-4 z-10 rounded bg-black/70 p-2 text-white">
-          <p>Share this URL for others to join:</p>
-          <p className="text-xs">{window.location.href}</p>
-          <p className="mt-2 text-xs">Connection status: {connectionStatus}</p>
-          <p className="text-xs">Connected players: {Object.keys(players).length}</p>
-          <p className="text-xs">Debug: {debugInfo}</p>
-          <p className="text-xs">Press P to debug connections</p>
-          <p className="text-xs">Press Ctrl+R to force reconnect</p>
-        </div>
-      )}
-    </div>
-  )
-}
 
