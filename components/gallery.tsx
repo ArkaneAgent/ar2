@@ -675,8 +675,8 @@ export default function Gallery({ username }: GalleryProps) {
           ctx.lineTo(x, 768)
           ctx.stroke()
         }
-
-        for (let y = 0; y <= 768; y += 50) {
+        \
+        for (let y = 0; y <= 768, y += 50) {
           ctx.beginPath()
           ctx.moveTo(0, y)
           ctx.lineTo(1024, y)
@@ -964,6 +964,10 @@ export default function Gallery({ username }: GalleryProps) {
       const urlParams = new URLSearchParams(window.location.search)
       const connectToPeer = urlParams.get("p") || urlParams.get("peer") // Support both formats
 
+      // Check if there's a peer ID in the URL to connect to
+      const urlParams = new URLSearchParams(window.location.search)
+      const connectToPeer = urlParams.get("p") || urlParams.get("peer") // Support both formats
+
       if (connectToPeer && connectToPeer !== peerId) {
         // Connect to the specified peer(s)
         connectToPeer.split(",").forEach((targetPeerId) => {
@@ -971,6 +975,11 @@ export default function Gallery({ username }: GalleryProps) {
             connectToPeerById(targetPeerId)
           }
         })
+
+        // Request all canvas data after a short delay to ensure connections are established
+        setTimeout(() => {
+          requestAllCanvasData()
+        }, 2000)
       }
 
       // Update the URL with our peer ID for others to connect
@@ -1068,22 +1077,29 @@ export default function Gallery({ username }: GalleryProps) {
           console.error("Error requesting peer list:", err)
         }
 
-        // Send canvas data
+        // Send canvas data - improved to ensure all drawings are shared
+        console.log("Sending all canvas data to new peer")
         canvases.forEach((canvas) => {
           const canvasId = canvas.userData.id
-          const savedData = localStorage.getItem(`canvas-${canvasId}`)
+          const savedDataString = localStorage.getItem(`canvas-${canvasId}`)
 
-          if (savedData) {
+          if (savedDataString) {
             try {
-              conn.send({
-                type: "canvasData",
-                data: {
-                  canvasId,
-                  imageData: savedData,
-                },
-              })
+              const savedData = JSON.parse(savedDataString)
+              // Only send if the data isn't too old
+              const currentTime = Date.now()
+              if (savedData.timestamp && currentTime - savedData.timestamp < 1800000) {
+                console.log(`Sending canvas data for ${canvasId} to new peer`)
+                conn.send({
+                  type: "canvasData",
+                  data: {
+                    canvasId,
+                    imageData: savedData.imageData,
+                  },
+                })
+              }
             } catch (err) {
-              console.error("Error sending canvas data:", err)
+              console.error(`Error sending canvas data for ${canvasId}:`, err)
             }
           }
         })
@@ -1152,6 +1168,34 @@ export default function Gallery({ username }: GalleryProps) {
                 })
               }
               break
+            case "requestAllCanvasData":
+              // Send all our canvas data to the requester
+              console.log("Received request for all canvas data")
+              canvases.forEach((canvas) => {
+                const canvasId = canvas.userData.id
+                const savedDataString = localStorage.getItem(`canvas-${canvasId}`)
+
+                if (savedDataString) {
+                  try {
+                    const savedData = JSON.parse(savedDataString)
+                    // Only send if the data isn't too old
+                    const currentTime = Date.now()
+                    if (savedData.timestamp && currentTime - savedData.timestamp < 1800000) {
+                      console.log(`Sending canvas data for ${canvasId} in response to request`)
+                      conn.send({
+                        type: "canvasData",
+                        data: {
+                          canvasId,
+                          imageData: savedData.imageData,
+                        },
+                      })
+                    }
+                  } catch (err) {
+                    console.error(`Error sending canvas data for ${canvasId}:`, err)
+                  }
+                }
+              })
+              break
           }
         } catch (err) {
           console.error("Error handling data:", err)
@@ -1193,6 +1237,22 @@ export default function Gallery({ username }: GalleryProps) {
               connectToPeerById(conn.peer)
             }
           }, 3000)
+        }
+      })
+    }
+
+    function requestAllCanvasData() {
+      console.log("Requesting all canvas data from peers")
+      Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
+        if (conn.open) {
+          try {
+            conn.send({
+              type: "requestAllCanvasData",
+              data: {},
+            })
+          } catch (err) {
+            console.error(`Error requesting canvas data from ${peerId}:`, err)
+          }
         }
       })
     }
@@ -1247,13 +1307,20 @@ export default function Gallery({ username }: GalleryProps) {
     }
 
     function handleCanvasData(data: any) {
-      if (!data || !data.canvasId) return
+      if (!data || !data.canvasId) {
+        console.error("Invalid canvas data received:", data)
+        return
+      }
 
       const { canvasId, imageData } = data
+      console.log(`Received canvas data for ${canvasId}`)
 
       // Find the canvas
       const canvas = canvases.find((c) => c.userData.id === canvasId)
-      if (!canvas) return
+      if (!canvas) {
+        console.error(`Canvas with id ${canvasId} not found`)
+        return
+      }
 
       // Update the canvas texture
       const offScreenCanvas = canvas.userData.offScreenCanvas
@@ -1263,6 +1330,12 @@ export default function Gallery({ username }: GalleryProps) {
         const img = new Image()
         img.crossOrigin = "anonymous"
         img.onload = () => {
+          // Clear the canvas first to ensure clean drawing
+          offCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
+          offCtx.fillStyle = "white"
+          offCtx.fillRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
+
+          // Draw the received image
           offCtx.drawImage(img, 0, 0)
 
           // Update the texture
@@ -1277,6 +1350,7 @@ export default function Gallery({ username }: GalleryProps) {
             timestamp: Date.now(),
           }
           localStorage.setItem(`canvas-${canvasId}`, JSON.stringify(canvasData))
+          console.log(`Updated canvas ${canvasId} with received data`)
         }
 
         // Handle both direct image data and JSON strings
@@ -1296,16 +1370,20 @@ export default function Gallery({ username }: GalleryProps) {
     }
 
     function handleCanvasUpdate(data: any) {
-      // Same as handleCanvasData
+      // First update our own canvas
       handleCanvasData(data)
 
-      // Forward to other peers
+      // Then forward to all other peers to ensure everyone has the latest drawing
+      console.log(`Forwarding canvas update for ${data.canvasId} to all peers`)
       Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
         if (conn.open) {
           try {
             conn.send({
               type: "canvasData",
-              data,
+              data: {
+                canvasId: data.canvasId,
+                imageData: data.imageData,
+              },
             })
           } catch (err) {
             console.error(`Error forwarding canvas update to ${peerId}:`, err)
@@ -1357,6 +1435,11 @@ export default function Gallery({ username }: GalleryProps) {
       const offCtx = offScreenCanvas.getContext("2d")
 
       if (offCtx) {
+        // Clear the canvas first
+        offCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
+        offCtx.fillStyle = "white"
+        offCtx.fillRect(0, 0, offScreenCanvas.width, offScreenCanvas.height)
+
         // Copy drawing to the texture
         offCtx.drawImage(drawingCanvas, 0, 0, offScreenCanvas.width, offScreenCanvas.height)
 
@@ -1374,7 +1457,8 @@ export default function Gallery({ username }: GalleryProps) {
         }
         localStorage.setItem(`canvas-${canvasId}`, JSON.stringify(canvasData))
 
-        // Broadcast to other peers
+        // Broadcast to all peers
+        console.log(`Broadcasting canvas update for ${canvasId} to all peers from exitDrawingMode`)
         Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
           if (conn.open) {
             try {
@@ -1456,7 +1540,8 @@ export default function Gallery({ username }: GalleryProps) {
         }
         localStorage.setItem(`canvas-${canvasId}`, JSON.stringify(canvasData))
 
-        // Broadcast to other peers
+        // Broadcast to all peers
+        console.log(`Broadcasting canvas update for ${canvasId} to all peers`)
         Object.entries(connectionsRef.current).forEach(([peerId, conn]) => {
           if (conn.open) {
             try {
