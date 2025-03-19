@@ -212,6 +212,22 @@ export default function Gallery({ username }: GalleryProps) {
     // Setup peer connection for multiplayer
     setupPeerConnection()
 
+    // Add a debug function to log connection status
+    function logConnectionStatus() {
+      console.log("=== CONNECTION STATUS ===")
+      console.log("My ID:", myId)
+      console.log("Peer instance exists:", !!peerRef.current)
+      console.log("Known peers:", Array.from(knownPeersRef.current))
+      console.log("Active connections:", Object.keys(connectionsRef.current))
+      console.log("Pending connections:", Object.keys(pendingConnectionsRef.current))
+      console.log("Player count:", Object.keys(players).length)
+      console.log("URL:", window.location.href)
+      console.log("========================")
+    }
+
+    // Call this function periodically
+    const statusInterval = setInterval(logConnectionStatus, 10000)
+
     // Debug function to log all players
     function debugPlayers() {
       console.log("Current players:", players)
@@ -766,16 +782,96 @@ export default function Gallery({ username }: GalleryProps) {
       // Generate a random color for this player
       const playerColor = getRandomColor()
 
-      // Create a new Peer with simplified configuration
+      // Create a new Peer with more reliable configuration
       const peer = new Peer(randomId, {
-        debug: 0, // Minimal debug level
+        debug: 1, // Reduced debug level
         config: {
-          iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:global.stun.twilio.com:3478" }],
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:global.stun.twilio.com:3478" },
+            { urls: "stun:stun1.l.google.com:19302" },
+            { urls: "stun:stun2.l.google.com:19302" },
+            { urls: "stun:stun3.l.google.com:19302" },
+            { urls: "stun:stun4.l.google.com:19302" },
+          ],
         },
       })
 
       console.log("Setting up new peer connection with ID:", randomId)
       peerRef.current = peer
+
+      // On connection established
+      peer.on("open", (id) => {
+        console.log("My peer ID is:", id)
+        setMyId(id)
+        setConnectionStatus("Connected as: " + id)
+
+        // Add ourselves to known peers
+        knownPeersRef.current.add(id)
+
+        // Create a player model for ourselves
+        createPlayerModel(id, username, playerColor, playerPosition)
+
+        // Join the gallery by connecting to peers from URL
+        joinGallery(id)
+      })
+
+      // Handle incoming connections
+      peer.on("connection", (conn) => {
+        console.log("Incoming connection from:", conn.peer)
+        setConnectionStatus("Incoming connection from: " + conn.peer)
+
+        // Store the connection
+        connectionsRef.current[conn.peer] = conn
+
+        // Mark as no longer pending
+        delete pendingConnectionsRef.current[conn.peer]
+
+        // Handle data from this peer
+        setupConnectionHandlers(conn)
+      })
+
+      // Handle errors
+      peer.on("error", (err) => {
+        console.error("Peer error:", err)
+        setConnectionStatus("Error: " + err.type)
+
+        // If it's a network error, try to reconnect
+        if (err.type === "network" || err.type === "server-error" || err.type === "socket-error") {
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current)
+          }
+
+          reconnectTimeoutRef.current = setTimeout(() => {
+            console.log("Attempting to reconnect after error...")
+            setConnectionStatus("Reconnecting after error...")
+            forceReconnect()
+          }, 5000)
+        }
+      })
+
+      // Handle disconnection
+      peer.on("disconnected", () => {
+        console.log("Disconnected from server. Attempting to reconnect...")
+        setConnectionStatus("Disconnected from server. Attempting to reconnect...")
+
+        // Try to reconnect
+        peer.reconnect()
+
+        // If reconnection fails, force a full reconnect after a timeout
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current)
+        }
+
+        reconnectTimeoutRef.current = setTimeout(() => {
+          if (peer.disconnected) {
+            console.log("Reconnection failed. Forcing full reconnect...")
+            forceReconnect()
+          }
+        }, 5000)
+      })
+
+      return peer
     }
 
     function createPlayerModel(id: string, playerName: string, color: string, position: THREE.Vector3) {
@@ -1326,11 +1422,12 @@ export default function Gallery({ username }: GalleryProps) {
     // Start animation loop
     animate()
 
-    // Cleanup
+    // Add to cleanup
     return () => {
       document.removeEventListener("keydown", onKeyDown)
       document.removeEventListener("keyup", onKeyUp)
       window.removeEventListener("resize", onWindowResize)
+      clearInterval(statusInterval)
 
       if (containerRef.current && renderer.domElement) {
         containerRef.current.removeChild(renderer.domElement)
@@ -1370,10 +1467,22 @@ export default function Gallery({ username }: GalleryProps) {
           <p>Share this URL for others to join:</p>
           <p className="text-xs">{window.location.href}</p>
           <p className="mt-2 text-xs">Connection status: {connectionStatus}</p>
-          <p className="text-xs">Connected players: {Object.keys(players).length}</p>
+          <p className="text-xs">
+            Connected players: {Object.keys(players).length}
+            <span
+              className={Object.keys(connectionsRef.current).length > 0 ? "text-green-400 ml-2" : "text-red-400 ml-2"}
+            >
+              {Object.keys(connectionsRef.current).length > 0 ? "● Online" : "● Offline"}
+            </span>
+          </p>
           <p className="text-xs">Debug: {debugInfo}</p>
           <p className="text-xs">Press P to debug connections</p>
           <p className="text-xs">Press Ctrl+R to force reconnect</p>
+
+          {/* Add a reconnect button */}
+          <button onClick={() => forceReconnect()} className="mt-2 bg-blue-600 text-white px-2 py-1 text-xs rounded">
+            Reconnect
+          </button>
         </div>
       )}
     </div>
