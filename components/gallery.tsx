@@ -843,9 +843,17 @@ export default function Gallery({ username }: GalleryProps) {
     }
 
     function enterDrawingMode(canvasObj: THREE.Mesh) {
+      // Make sure to unlock controls first
       controls.unlock()
-      setDrawingMode(true)
-      setCurrentCanvas(canvasObj)
+
+      // Set a small timeout to ensure the unlock is processed before setting drawing mode
+      setTimeout(() => {
+        setDrawingMode(true)
+        setCurrentCanvas(canvasObj)
+
+        // Explicitly make cursor visible
+        document.body.style.cursor = "auto"
+      }, 100)
     }
 
     function setupPeerConnection() {
@@ -1782,12 +1790,12 @@ export default function Gallery({ username }: GalleryProps) {
     setDrawingMode(false)
     setCurrentCanvas(null)
 
-    // Re-lock controls
-    if (controlsRef.current) {
-      setTimeout(() => {
-        controlsRef.current?.lock()
-      }, 100)
-    }
+    // Re-lock controls after a short delay to ensure UI state is updated
+    setTimeout(() => {
+      if (controlsRef.current) {
+        controlsRef.current.lock()
+      }
+    }, 200)
   }
 
   return (
