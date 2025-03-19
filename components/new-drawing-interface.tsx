@@ -14,13 +14,17 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
   const [color, setColor] = useState("#000000")
   const [brushSize, setBrushSize] = useState(5)
   const lastPosRef = useRef<{ x: number; y: number } | null>(null)
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
 
+  // Initialize canvas once on mount
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
 
     const ctx = canvas.getContext("2d")
     if (!ctx) return
+
+    ctxRef.current = ctx
 
     // Initialize canvas with white background
     ctx.fillStyle = "white"
@@ -43,8 +47,13 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
         console.error("Error loading saved canvas:", e)
       }
     }
+  }, [canvasId])
 
-    // Setup drawing handlers
+  // Set up event listeners
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
     const handleMouseDown = (e: MouseEvent) => {
       setIsDrawing(true)
       const rect = canvas.getBoundingClientRect()
@@ -55,20 +64,20 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
     }
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isDrawing || !lastPosRef.current) return
+      if (!isDrawing || !lastPosRef.current || !ctxRef.current) return
 
       const rect = canvas.getBoundingClientRect()
       const x = e.clientX - rect.left
       const y = e.clientY - rect.top
 
-      ctx.beginPath()
-      ctx.moveTo(lastPosRef.current.x, lastPosRef.current.y)
-      ctx.lineTo(x, y)
-      ctx.strokeStyle = color
-      ctx.lineWidth = brushSize
-      ctx.lineCap = "round"
-      ctx.lineJoin = "round"
-      ctx.stroke()
+      ctxRef.current.beginPath()
+      ctxRef.current.moveTo(lastPosRef.current.x, lastPosRef.current.y)
+      ctxRef.current.lineTo(x, y)
+      ctxRef.current.strokeStyle = color
+      ctxRef.current.lineWidth = brushSize
+      ctxRef.current.lineCap = "round"
+      ctxRef.current.lineJoin = "round"
+      ctxRef.current.stroke()
 
       lastPosRef.current = { x, y }
     }
@@ -97,7 +106,7 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
       canvas.removeEventListener("mouseleave", handleMouseUp)
       document.removeEventListener("keydown", handleKeyDown)
     }
-  }, [canvasId, isDrawing, color, brushSize])
+  }, [isDrawing, color, brushSize])
 
   const handleSaveAndClose = () => {
     if (canvasRef.current) {
@@ -109,13 +118,10 @@ export function NewDrawingInterface({ canvasId, onSave, onClose }: NewDrawingInt
 
   const handleClear = () => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    if (!canvas || !ctxRef.current) return
 
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-
-    ctx.fillStyle = "white"
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctxRef.current.fillStyle = "white"
+    ctxRef.current.fillRect(0, 0, canvas.width, canvas.height)
   }
 
   // Predefined colors
